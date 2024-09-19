@@ -1,10 +1,17 @@
 import requests
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+API_KEY_ID = os.getenv("API_KEY_ID")
+API_SECRET_KEY = os.getenv("API_SECRET_KEY")
 
 url = "https://paper-api.alpaca.markets/v2/orders"
 
 headers = {
-    "APCA-API-KEY-ID": "PKGDSHK8BUDWJY21N4ZX",
-    "APCA-API-SECRET-KEY": "ER3NWL6YNNules0rg33SihD13WHyquJq2gzTEG8Z"
+    "APCA-API-KEY-ID": API_KEY_ID,
+    "APCA-API-SECRET-KEY": API_SECRET_KEY
 }
 
 data = {
