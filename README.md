@@ -1,2 +1,2 @@
 # MyTP-project
-Barebones trading platform for automated trading
+Barebones trading bot for automated trading
