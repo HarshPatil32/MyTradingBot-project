@@ -6,13 +6,23 @@ import alpaca_trade_api as tradeapi
 import talib
 from datetime import datetime, timedelta
 from alpaca.data.timeframe import TimeFrame
-from alpaca.trading.requests import MarketOrderRequest, OrderSide, OrderType
-import numpy as np
-from flask_socketio import SocketIO
 from threading import Thread, Event
 import time
+import zipline
+from zipline.api import order, record, symbol, set_benchmark, schedule_function, date_rules, time_rules
+from zipline.finance import commission, slippage
+import matplotlib.pyplot as plt
+import logging
 
 app = Flask(__name__)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("app.log"),  # Logs to app.log file
+        logging.StreamHandler()          # Logs to console/terminal
+    ])
 
 
 
@@ -27,23 +37,32 @@ url = "https://paper-api.alpaca.markets"
 
 
 
+
 api = tradeapi.REST(API_KEY_ID, API_SECRET_KEY, url)
 
 short_window = 20
 long_window = 50
 
+def send_trend_signal_to_webhook(trend, symbol):
+    url = "http://localhost:5000/webhookcallback"
+    payload = {
+        "symbol": symbol,
+        "trend": trend
+    }
+    response = requests.post(url, json = payload)
+    return response.status_code, response.json()
+
+
 def get_historical_data(symbol):
     barset = api.get_bars(
-        symbol, TimeFrame.Minute, start = (datetime.now() - timedelta(days=1)).isoformat(),
-        end = datetime.now().isoformat()
+        symbol, TimeFrame.Minute, start = (datetime.now() - timedelta(days=1)).isoformat() + 'Z',
+        end = datetime.now().isoformat() + 'Z'
     ).df
 
-    symbol_data = barset[barset['symbol'] == symbol]
     
-    return symbol_data
+    return barset
 
-def calculate_moving_averages(symbol):
-    data = get_historical_data(symbol)
+def calculate_moving_averages(data):
 
     data['short_ma'] = talib.SMA(data['close'], timeperiod = short_window)
     data['long_ma'] = talib.SMA(data['close'], timeperiod = long_window)
@@ -66,5 +85,37 @@ def detect_trend(data):
         return "sideways"
     else:
         return "indecisive"
+    
+def monitor_stock(symbol):
+    data = get_historical_data(symbol)
+    MA = calculate_moving_averages(data)
+
+    trend = detect_trend(MA)
+    logging.info(f"The current trend for {symbol} is {trend}")
+
+def run_monitoring(symbol, interval=60):
+    while True:
+        monitor_stock(symbol)
+        time.sleep(interval)
+
+@app.route("/webhookcallback", methods=["POST"])
+def hook():
+    if request.is_json:
+        data = request.get_json()
+        print(data)
+        return jsonify({"status": "success", "message": "Webhook received"}), 200
+    else:
+        return jsonify({"status": "error", "message": "Invalid content type"}), 400
+    
+
+if __name__ == "__main__":
+    # Start the stock monitoring thread for a specific stock symbol, e.g., AAPL
+    symbol = "AAPL"
+    logging.info("Beginning Thread")
+    monitor_thread = Thread(target=run_monitoring, args=(symbol,))
+    monitor_thread.start()
+    
+    app.run()
+
 
 
