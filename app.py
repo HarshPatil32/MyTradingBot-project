@@ -13,6 +13,7 @@ from zipline.api import order, record, symbol, set_benchmark, schedule_function,
 from zipline.finance import commission, slippage
 import matplotlib.pyplot as plt
 import logging
+from symbols import symbol
 
 app = Flask(__name__)
 
@@ -87,16 +88,67 @@ def detect_trend(data):
         return "indecisive"
     
 def monitor_stock(symbol):
-    data = get_historical_data(symbol)
+    data = get_historical_data(symbol.name)
     MA = calculate_moving_averages(data)
 
+    old_trend = symbol.trend
     trend = detect_trend(MA)
+    if symbol.trend != trend:
+        symbol.trend = trend
+        if trend == 'upward' and (old_trend == 'downard' or old_trend == 'sideways'):
+            market_buy(symbol.name, 5)
+            logging.info(f"You just bought 5 shares of {symbol}")
+        elif trend == 'sideways' and old_trend == 'upward':
+            market_sell(symbol.name, 5)
+            logging.info(f"You just sold 5 shares of {symbol}")
+        elif trend == 'sideways' and old_trend == 'downward':
+            market_buy(symbol.name, 5)
+            logging.info(f"You just bought 5 shares of {symbol}")
+        elif trend == 'downward' and (old_trend == 'upward' or old_trend == 'sideways'):
+            market_sell(symbol.name, 5)
+            logging.info(f"You just sold 5 shares of {symbol}")
+        elif trend == 'upward' and old_trend == 'downward':
+            market_sell(symbol.name, 10)
+            logging.info(f"You just closed long position and sold 5 shares of {symbol}")
+        elif trend == 'downward' and old_trend == 'upward':
+            market_buy(symbol.name, 10)
+            logging.info(f"You just closed short position and bought 5 shares of {symbol}")
+
+    
+    
     logging.info(f"The current trend for {symbol} is {trend}")
 
-def run_monitoring(symbol, interval=60):
+def run_monitoring(symbols, interval=60):
     while True:
-        monitor_stock(symbol)
+        for symbol in symbols:
+            monitor_stock(symbol)
         time.sleep(interval)
+
+def market_buy(symbol, qty):
+    try:
+        order = api.submit_order(
+            symbol=symbol,
+            qty=qty,
+            side='buy',
+            type='market',
+            time_in_force='gtc'
+        )
+        return order
+    except Exception as e:
+        logging.info(f"error placing order {e}")
+
+def market_sell(symbol, qty):
+    try:
+        order = api.submit_order(
+            symbol=symbol,
+            qty=qty,
+            side='sell',
+            type='market',
+            time_in_force='gtc'
+        )
+        return order
+    except Exception as e:
+        logging.info(f"error placing order {e}")
 
 @app.route("/webhookcallback", methods=["POST"])
 def hook():
@@ -109,10 +161,12 @@ def hook():
     
 
 if __name__ == "__main__":
-    # Start the stock monitoring thread for a specific stock symbol, e.g., AAPL
-    symbol = "AAPL"
+    apple = symbol("AAPL")
+    spy = symbol("SPY")
+    nvidia = symbol("NVDA")
+    symbols = [apple, spy, nvidia]
     logging.info("Beginning Thread")
-    monitor_thread = Thread(target=run_monitoring, args=(symbol,))
+    monitor_thread = Thread(target=run_monitoring, args=(symbols,))
     monitor_thread.start()
     
     app.run()
