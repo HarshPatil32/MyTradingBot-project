@@ -61,6 +61,7 @@ def calculate_moving_averages(data):
 
     data['short_ma'] = talib.SMA(data['close'], timeperiod = short_window)
     data['long_ma'] = talib.SMA(data['close'], timeperiod = long_window)
+    # data['RSI'] = talib.RSI(data['Close'], timeperiod=14)
 
     return data
 
@@ -84,33 +85,34 @@ def detect_trend(data):
 def monitor_stock(symbol):
     data = get_historical_data(symbol.name)
     MA = calculate_moving_averages(data)
-
+    # RSI = MA['RSI'].iloc[-1]
+    # logging.info(f"The RSI for {symbol.name} is {RSI}")
     old_trend = symbol.trend
     trend = detect_trend(MA)
-    if symbol.trend != trend:
+    if old_trend != trend:
         symbol.trend = trend
-        if trend == 'upward' and (old_trend == 'downard' or old_trend == 'sideways'):
-            market_buy(symbol.name, 5)
-            logging.info(f"You just bought 5 shares of {symbol}")
-        elif trend == 'sideways' and old_trend == 'upward':
-            market_sell(symbol.name, 5)
-            logging.info(f"You just sold 5 shares of {symbol}")
-        elif trend == 'sideways' and old_trend == 'downward':
-            market_buy(symbol.name, 5)
-            logging.info(f"You just bought 5 shares of {symbol}")
-        elif trend == 'downward' and (old_trend == 'upward' or old_trend == 'sideways'):
-            market_sell(symbol.name, 5)
-            logging.info(f"You just sold 5 shares of {symbol}")
-        elif trend == 'upward' and old_trend == 'downward':
-            market_sell(symbol.name, 10)
-            logging.info(f"You just closed long position and sold 5 shares of {symbol}")
-        elif trend == 'downward' and old_trend == 'upward':
+        if trend == 'upward' and old_trend == 'sideways':
             market_buy(symbol.name, 10)
-            logging.info(f"You just closed short position and bought 5 shares of {symbol}")
+            logging.info(f"You just bought 10 shares of {symbol.name}")
+        elif trend == 'sideways' and old_trend == 'upward':
+            market_sell(symbol.name, 10)
+            logging.info(f"You just sold 10 shares of {symbol.name}")
+        elif trend == 'sideways' and old_trend == 'downward':
+            market_buy(symbol.name, 10)
+            logging.info(f"You just bought 10 shares of {symbol.name}")
+        elif trend == 'downward' and old_trend == 'sideways':
+            market_sell(symbol.name, 10)
+            logging.info(f"You just sold 10 shares of {symbol.name}")
+        elif trend == 'upward' and old_trend == 'downward':
+            market_sell(symbol.name, 20)
+            logging.info(f"You just closed long position and sold 10 shares of {symbol.name}")
+        elif trend == 'downward' and old_trend == 'upward':
+            market_buy(symbol.name, 20)
+            logging.info(f"You just closed short position and bought 10 shares of {symbol.name}")
 
     
     
-    logging.info(f"The current trend for {symbol} is {trend}")
+    logging.info(f"The current trend for {symbol.name} is {trend}")
 
 def run_monitoring(symbols, interval=60):
     while True:

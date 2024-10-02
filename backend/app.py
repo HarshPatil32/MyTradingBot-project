@@ -2,10 +2,12 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from threading import Thread, Event
 import logging
-from symbols import symbol
-from moving_averages import run_monitoring
+from backend.symbols import symbol
+from backend.moving_averages import run_monitoring
+
 
 app = Flask(__name__)
+
 
 
 
