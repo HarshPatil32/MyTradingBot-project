@@ -23,7 +23,12 @@ if __name__ == "__main__":
     apple = symbol("AAPL")
     spy = symbol("SPY")
     nvidia = symbol("NVDA")
-    symbols = [apple, spy, nvidia]
+    salesforce = symbol("CRM")
+    coke = symbol("KO")
+    jnj = symbol("JNJ")
+    amazon = symbol("AMZN")
+    lockheed = symbol("LMT")
+    symbols = [apple, spy, nvidia, salesforce, coke, jnj, amazon, lockheed]
     logging.info("Beginning Thread")
     monitor_thread = Thread(target=run_monitoring, args=(symbols,))
     monitor_thread.start()
