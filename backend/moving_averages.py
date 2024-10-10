@@ -15,8 +15,8 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("app.log"),  # Logs to app.log file
-        logging.StreamHandler()          # Logs to console/terminal
+        logging.FileHandler("app.log"),  
+        logging.StreamHandler()          
     ])
 
 
@@ -35,8 +35,8 @@ url = "https://paper-api.alpaca.markets"
 
 api = tradeapi.REST(API_KEY_ID, API_SECRET_KEY, url)
 
-short_window = 2
-long_window = 5
+short_window = 50
+long_window = 200
 
 def send_trend_signal_to_webhook(trend, symbol):
     url = "http://localhost:5000/webhookcallback"
@@ -50,7 +50,7 @@ def send_trend_signal_to_webhook(trend, symbol):
 
 def get_historical_data(symbol):
     barset = api.get_bars(
-        symbol, TimeFrame.Minute, start = (datetime.now() - timedelta(days=1)).isoformat() + 'Z',
+        symbol, TimeFrame.Day, start = (datetime.now() - timedelta(days=1)).isoformat() + 'Z',
         end = datetime.now().isoformat() + 'Z'
     ).df
 
@@ -62,6 +62,7 @@ def calculate_indicators(data):
     data['long_ma'] = talib.EMA(data['close'], timeperiod=long_window)
     data['RSI'] = talib.RSI(data['close'], timeperiod=14)
     data['ADX'] = talib.ADX(data['high'], data['low'], data['close'], timeperiod=14)
+    data['ATR'] = talib.ATR(data['high'], data['low'], data['close'], timeperiod=14)
     return data
 
 
@@ -74,26 +75,21 @@ def get_slope(time_period, periods=3):
     return time_period.iloc[-1] - time_period.iloc[-periods]
 
 
+def detect_crossover(data):
+    short_ma = data['short_ma'].iloc[-1]
+    long_ma = data['long_ma'].iloc[-1]
+    prev_short_ma = data['short_ma'].iloc[-2]
+    prev_long_ma = data['long_ma'].iloc[-2]
 
-def detect_trend(data):
-    short_slope = get_slope(data['short_ma'])
-    long_slope = get_slope(data['long_ma'])
-    rsi = data['RSI'].iloc[-1]
-    adx = data['ADX'].iloc[-1]
+    # Buy signal (golden cross): short MA crosses above long MA
+    if prev_short_ma <= prev_long_ma and short_ma > long_ma:
+        return "buy"
 
-    if short_slope is None or long_slope is None or len(data) < max(short_window, long_window):
-        return "indecisive"
+    # Sell signal (death cross): short MA crosses below long MA
+    elif prev_short_ma >= prev_long_ma and short_ma < long_ma:
+        return "sell"
 
-    if adx > 25:  
-        if short_slope > 0 and long_slope > 0 and data['short_ma'].iloc[-1] > data['long_ma'].iloc[-1]:
-            return "upward"
-        elif short_slope < 0 and long_slope < 0 and data['short_ma'].iloc[-1] < data['long_ma'].iloc[-1]:
-            return "downward"
-
-    if abs(short_slope) < 0.1 and abs(long_slope) < 0.1:
-        return "sideways"
-
-    return "indecisive"
+    return "hold"
 
     
 def monitor_stock(symbol):
@@ -170,7 +166,7 @@ def market_sell(symbol, qty, stop_loss=None, take_profit=None):
         logging.error(f"Error placing sell order for {symbol}: {e}")
 
 
-def backtest_strategy(symbol, start_date, end_date, initial_balance=100000, stop_loss_pct=0.05, take_profit_pct=0.1):
+def backtest_strategy_crossover(symbol, start_date, end_date, initial_balance=100000):
     logging.info(f"Backtesting {symbol} from {start_date} to {end_date}")
     
     data = api.get_bars(
@@ -185,30 +181,23 @@ def backtest_strategy(symbol, start_date, end_date, initial_balance=100000, stop
     balance = initial_balance  
     trade_history = []  
 
-    for index in range(len(data)):
-        trend = detect_trend(data.iloc[:index + 1])
+    for index in range(1, len(data)):  
+        trend_signal = detect_crossover(data.iloc[:index + 1])
         price = data['close'].iloc[index]
         
-        if position == 0 and trend == "upward" and balance > 0:
-            risk_amount = balance * 0.05
-            qty = int(risk_amount / price) 
-            stop_loss = price * (1 - stop_loss_pct)  
-            take_profit = price * (1 + take_profit_pct) 
-            
+        if trend_signal == "buy" and position == 0:
+            qty = int(balance * 0.1 / price)  
+            balance -= qty * price  
             position = qty
-            balance -= qty * price 
-            
             logging.info(f"Bought {qty} shares at {price} on {data.index[index]}")
             trade_history.append({
                 'action': 'buy',
                 'price': price,
                 'qty': qty,
-                'stop_loss': stop_loss,
-                'take_profit': take_profit,
                 'date': data.index[index]
             })
         
-        elif position > 0 and trend == "downward":
+        elif trend_signal == "sell" and position > 0:
             balance += position * price  
             logging.info(f"Sold {position} shares at {price} on {data.index[index]}")
             trade_history.append({
@@ -218,31 +207,11 @@ def backtest_strategy(symbol, start_date, end_date, initial_balance=100000, stop
                 'date': data.index[index]
             })
             position = 0  
-        
-        if position > 0:
-            last_trade = trade_history[-1]
-            if price <= last_trade['stop_loss']:
-                balance += position * price
-                logging.info(f"Sold {position} shares at {price} (Stop-Loss Triggered) on {data.index[index]}")
-                trade_history.append({
-                    'action': 'sell',
-                    'price': price,
-                    'qty': position,
-                    'date': data.index[index]
-                })
-                position = 0  
-            elif price >= last_trade['take_profit']:
-                balance += position * price
-                logging.info(f"Sold {position} shares at {price} (Take-Profit Triggered) on {data.index[index]}")
-                trade_history.append({
-                    'action': 'sell',
-                    'price': price,
-                    'qty': position,
-                    'date': data.index[index]
-                })
-                position = 0 
 
-    final_value = balance + (position * data['close'].iloc[-1]) if position > 0 else balance
-    logging.info(f"Initial Balance: {initial_balance}, Final Value: {final_value}")
+   
+    if position > 0:
+        balance += position * data['close'].iloc[-1]
+
+    logging.info(f"Initial Balance: {initial_balance}, Final Balance: {balance}")
     
-    return final_value, trade_history
+    return balance, trade_history
