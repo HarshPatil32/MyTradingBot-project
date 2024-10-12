@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from threading import Thread, Event
 import logging
 from symbols import symbol
-from moving_averages import run_monitoring, backtest_strategy
+from moving_averages import run_monitoring, backtest_strategy_crossover
 from datetime import datetime
 
 
@@ -49,10 +49,10 @@ if __name__ == "__main__":
     '''
 
     start_date = datetime(2023, 1, 1)  
-    end_date = datetime(2023, 9, 30)
+    end_date = datetime(2024, 1, 1)
     symbol = "NVDA"  
 
-    backtest_strategy(symbol, start_date, end_date)
+    backtest_strategy_crossover(symbol, start_date, end_date)
 
 
 
