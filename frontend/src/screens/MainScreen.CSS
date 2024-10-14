@@ -1,0 +1,26 @@
+.main-title {
+    font-size: 3rem; 
+    font-family: 'Arial', sans-serif; 
+    color: #333; 
+    text-align: center; 
+}
+
+.strategy-title {
+    font-size: 2rem; 
+    font-family: 'Verdana', sans-serif; 
+    color: #555; 
+    text-align: center;
+}
+
+.strategy-button{
+    margin-top: 20px;
+    padding: 10px 20px;
+    background-color: #3807fc;
+    color: white;
+    border: none;
+    border-radius: 20px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    width: 140px;
+  }
