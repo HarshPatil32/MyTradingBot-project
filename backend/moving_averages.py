@@ -60,9 +60,9 @@ def get_historical_data(symbol):
 def calculate_indicators(data):
     data['short_ma'] = talib.EMA(data['close'], timeperiod=short_window)
     data['long_ma'] = talib.EMA(data['close'], timeperiod=long_window)
-    data['RSI'] = talib.RSI(data['close'], timeperiod=14)
-    data['ADX'] = talib.ADX(data['high'], data['low'], data['close'], timeperiod=14)
-    data['ATR'] = talib.ATR(data['high'], data['low'], data['close'], timeperiod=14)
+    # data['RSI'] = talib.RSI(data['close'], timeperiod=14)
+    # data['ADX'] = talib.ADX(data['high'], data['low'], data['close'], timeperiod=14)
+   # data['ATR'] = talib.ATR(data['high'], data['low'], data['close'], timeperiod=14)
     return data
 
 
@@ -94,31 +94,20 @@ def detect_crossover(data):
     
 def monitor_stock(symbol):
     data = get_historical_data(symbol.name)
-    MA = calculate_moving_averages(data)
-    # RSI = MA['RSI'].iloc[-1]
-    # logging.info(f"The RSI for {symbol.name} is {RSI}")
+    data = calculate_indicators(data)
+    new_trend = detect_crossover(data)
     old_trend = symbol.trend
-    trend = detect_trend(MA)
-    if old_trend != trend:
-        symbol.trend = trend
-        if trend == 'upward' and old_trend == 'sideways':
-            market_buy(symbol.name, 20)
-            logging.info(f"You just bought 20 shares of {symbol.name}")
-        elif trend == 'sideways' and old_trend == 'upward':
-            market_sell(symbol.name, 20)
-            logging.info(f"You just sold 20 shares of {symbol.name}")
-        elif trend == 'sideways' and old_trend == 'downward':
-            market_buy(symbol.name, 20)
-            logging.info(f"You just bought 20 shares of {symbol.name}")
-        elif trend == 'downward' and old_trend == 'sideways':
-            market_sell(symbol.name, 20)
-            logging.info(f"You just sold 20 shares of {symbol.name}")
-        elif trend == 'upward' and old_trend == 'downward':
-            market_buy(symbol.name, 40)
-            logging.info(f"You just closed short position and bought 20 shares of {symbol.name}")
-        elif trend == 'downward' and old_trend == 'upward':
-            market_sell(symbol.name, 40)
-            logging.info(f"You just closed long position and sold 20 shares of {symbol.name}")
+    
+    if old_trend != new_trend:
+        symbol.trend = new_trend
+        
+        if new_trend == "buy" and old_trend != "buy":
+            market_buy(symbol.name, data['close'].iloc[-1], 20)  # Buy 20 shares (or as per logic)
+            logging.info(f"Bought 20 shares of {symbol.name} at {data['close'].iloc[-1]}")
+        
+        elif new_trend == "sell" and old_trend != "sell":
+            market_sell(symbol.name, 20) 
+            logging.info(f"Sold 20 shares of {symbol.name} at {data['close'].iloc[-1]}")
 
     
     
@@ -144,15 +133,9 @@ def market_buy(symbol, price, balance, risk_per_trade=0.01):
     except Exception as e:
         logging.error(f"Error placing buy order for {symbol}: {e}")
 
-def market_sell(symbol, qty, stop_loss=None, take_profit=None):
+def market_sell(symbol, qty):
     try:
         price = api.get_last_trade(symbol).price
-        if stop_loss and price <= stop_loss:
-            logging.info(f"Selling {symbol} due to stop loss at {price}")
-        elif take_profit and price >= take_profit:
-            logging.info(f"Selling {symbol} to take profit at {price}")
-        else:
-            logging.info(f"Selling {symbol} at market price")
         
         order = api.submit_order(
             symbol=symbol,
@@ -166,52 +149,64 @@ def market_sell(symbol, qty, stop_loss=None, take_profit=None):
         logging.error(f"Error placing sell order for {symbol}: {e}")
 
 
-def backtest_strategy_crossover(symbol, start_date, end_date, initial_balance=100000):
-    logging.info(f"Backtesting {symbol} from {start_date} to {end_date}")
+def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=100000):
+    logging.info(f"Backtesting portfolio from {start_date} to {end_date}")
     
-    data = api.get_bars(
-        symbol, TimeFrame.Minute, 
-        start=start_date.isoformat() + 'Z', 
-        end=end_date.isoformat() + 'Z'
-    ).df
-    
-    data = calculate_indicators(data)
-    
-    position = 0  
-    balance = initial_balance  
-    trade_history = []  
+    portfolio_balance = initial_balance
+    total_trade_history = []
 
-    for index in range(1, len(data)):  
-        trend_signal = detect_crossover(data.iloc[:index + 1])
-        price = data['close'].iloc[index]
+    for symbol in symbols:
+        logging.info(f"Backtesting {symbol} from {start_date} to {end_date}")
         
-        if trend_signal == "buy" and position == 0:
-            qty = int(balance * 0.1 / price)  
-            balance -= qty * price  
-            position = qty
-            logging.info(f"Bought {qty} shares at {price} on {data.index[index]}")
-            trade_history.append({
-                'action': 'buy',
-                'price': price,
-                'qty': qty,
-                'date': data.index[index]
-            })
+        data = api.get_bars(
+            symbol, TimeFrame.Hour, 
+            start=start_date.isoformat() + 'Z', 
+            end=end_date.isoformat() + 'Z'
+        ).df
         
-        elif trend_signal == "sell" and position > 0:
-            balance += position * price  
-            logging.info(f"Sold {position} shares at {price} on {data.index[index]}")
-            trade_history.append({
-                'action': 'sell',
-                'price': price,
-                'qty': position,
-                'date': data.index[index]
-            })
-            position = 0  
+        data = calculate_indicators(data)
+        
+        position = 0  
+        balance = initial_balance / len(symbols)  
+        trade_history = []  
 
-   
-    if position > 0:
-        balance += position * data['close'].iloc[-1]
+        for index in range(1, len(data)):
+            trend_signal = detect_crossover(data.iloc[:index + 1])
+            price = data['close'].iloc[index]
+            
+            if trend_signal == "buy" and position == 0:
+                qty = int(balance / price)  
+                balance -= qty * price
+                position = qty
+                # logging.info(f"Bought {qty} shares of {symbol} at {price} on {data.index[index]}")
+                trade_history.append({
+                    'symbol': symbol,
+                    'action': 'buy',
+                    'price': price,
+                    'qty': qty,
+                    'date': data.index[index]
+                })
+            
+            elif trend_signal == "sell" and position > 0:
+                balance += position * price
+                # logging.info(f"Sold {position} shares of {symbol} at {price} on {data.index[index]}")
+                trade_history.append({
+                    'symbol': symbol,
+                    'action': 'sell',
+                    'price': price,
+                    'qty': position,
+                    'date': data.index[index]
+                })
+                position = 0
 
-    logging.info(f"Initial Balance: {initial_balance}, Final Balance: {balance}")
+        if position > 0:
+            balance += position * data['close'].iloc[-1]
+
+        portfolio_balance += balance - (initial_balance / len(symbols))
+        total_trade_history.extend(trade_history)
+
+        logging.info(f"Initial Balance: {initial_balance / len(symbols)}, Final Balance for {symbol}: {balance}")
+
+    logging.info(f"Portfolio Initial Balance: {initial_balance}, Final Portfolio Balance: {portfolio_balance}")
     
-    return balance, trade_history
+    return portfolio_balance, total_trade_history
