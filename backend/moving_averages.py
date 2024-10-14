@@ -149,7 +149,7 @@ def market_sell(symbol, qty):
         logging.error(f"Error placing sell order for {symbol}: {e}")
 
 
-def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=100000):
+def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=100000, stop_loss = 0.1):
     logging.info(f"Backtesting portfolio from {start_date} to {end_date}")
     
     portfolio_balance = initial_balance
@@ -159,7 +159,7 @@ def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=1
         logging.info(f"Backtesting {symbol} from {start_date} to {end_date}")
         
         data = api.get_bars(
-            symbol, TimeFrame.Hour, 
+            symbol, TimeFrame.Day, 
             start=start_date.isoformat() + 'Z', 
             end=end_date.isoformat() + 'Z'
         ).df
@@ -167,17 +167,32 @@ def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=1
         data = calculate_indicators(data)
         
         position = 0  
-        balance = initial_balance / len(symbols)  
+        balance = portfolio_balance / len(symbols)  
         trade_history = []  
+        purchase_price = None 
 
         for index in range(1, len(data)):
             trend_signal = detect_crossover(data.iloc[:index + 1])
             price = data['close'].iloc[index]
-            
-            if trend_signal == "buy" and position == 0:
+
+            if position > 0 and price <= purchase_price * (1 - stop_loss):
+                balance += position * price
+                # logging.info(f"Stop-loss triggered for {symbol}, sold {position} shares at {price} on {data.index[index]}")
+                trade_history.append({
+                    'symbol': symbol,
+                    'action': 'sell',
+                    'price': price,
+                    'qty': position,
+                    'date': data.index[index],
+                    'reason': 'stop_loss'
+                })
+                position = 0
+                purchase_price = None
+            elif trend_signal == "buy" and position == 0:
                 qty = int(balance / price)  
                 balance -= qty * price
                 position = qty
+                purchase_price = price
                 # logging.info(f"Bought {qty} shares of {symbol} at {price} on {data.index[index]}")
                 trade_history.append({
                     'symbol': symbol,
@@ -198,6 +213,7 @@ def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=1
                     'date': data.index[index]
                 })
                 position = 0
+                purchase_price = None
 
         if position > 0:
             balance += position * data['close'].iloc[-1]
