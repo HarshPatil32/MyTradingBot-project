@@ -81,11 +81,9 @@ def detect_crossover(data):
     prev_short_ma = data['short_ma'].iloc[-2]
     prev_long_ma = data['long_ma'].iloc[-2]
 
-    # Buy signal (golden cross): short MA crosses above long MA
     if prev_short_ma <= prev_long_ma and short_ma > long_ma:
         return "buy"
 
-    # Sell signal (death cross): short MA crosses below long MA
     elif prev_short_ma >= prev_long_ma and short_ma < long_ma:
         return "sell"
 
@@ -102,7 +100,7 @@ def monitor_stock(symbol):
         symbol.trend = new_trend
         
         if new_trend == "buy" and old_trend != "buy":
-            market_buy(symbol.name, data['close'].iloc[-1], 20)  # Buy 20 shares (or as per logic)
+            market_buy(symbol.name, data['close'].iloc[-1], 20) 
             logging.info(f"Bought 20 shares of {symbol.name} at {data['close'].iloc[-1]}")
         
         elif new_trend == "sell" and old_trend != "sell":
