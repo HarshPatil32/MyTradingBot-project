@@ -1,0 +1,51 @@
+.page-title {
+    font-size: 2rem; 
+    font-family: 'Arial', sans-serif; 
+    color: #333; 
+    text-align: center;
+}
+
+.caption {
+    color: #333;
+    font-family: 'Arial', sans-serif;
+}
+
+.stocks-caption {
+    font-size: 15px;
+    color: #333;
+    font-family: 'Helvetica', sans-serif;
+    text-align: left;
+    font-style: italic;
+}
+
+.error-message {
+    color: #f60404;
+    font-family: 'Times', Times;
+    font-weight: bold;
+
+}
+
+.stock-input-container {
+    text-align: left;
+}
+
+.stock-input {
+    text-align: left;
+    width: 15%;
+    height: 15px;
+    border-radius: 4px;
+    position: relative;
+    background-color: rgba(255, 255, 255, 0.3);
+    transition: 0.3s all;
+    border: 1px solid #ccc;
+    padding: 10px;
+}
+
+.stock-input:hover{
+    background-color: rgba(255, 255, 255, 0.45);
+    box-shadow: 0px 4px 20px 0px rgba(0, 0, 0, 0.05);
+}
+
+.stock-list {
+    text-align: left;
+}
