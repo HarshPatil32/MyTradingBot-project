@@ -149,7 +149,7 @@ def market_sell(symbol, qty):
         logging.error(f"Error placing sell order for {symbol}: {e}")
 
 
-def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=100000, stop_loss = 0.1):
+def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=100000, stop_loss = 0.05):
     logging.info(f"Backtesting portfolio from {start_date} to {end_date}")
     
     portfolio_balance = initial_balance
