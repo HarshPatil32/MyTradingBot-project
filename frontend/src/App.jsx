@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import MainScreen from './screens/MainScreen'
+import MovingAverages from './screens/MovingAverages'
 import './App.css'
-import { Routes, Route } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 
 function App() {
   console.log('Hello')
@@ -11,6 +12,7 @@ function App() {
         <div className = "content">
           <Routes>
             <Route path="/" element={<MainScreen />} />
+            <Route path="/moving-averages" element={<MovingAverages />} />
           </Routes>
         </div>
       </div>
