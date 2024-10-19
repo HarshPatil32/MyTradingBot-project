@@ -35,8 +35,8 @@ url = "https://paper-api.alpaca.markets"
 
 api = tradeapi.REST(API_KEY_ID, API_SECRET_KEY, url)
 
-short_window = 50
-long_window = 200
+short_window = 3
+long_window = 15
 
 def send_trend_signal_to_webhook(trend, symbol):
     url = "http://localhost:5000/webhookcallback"
@@ -147,11 +147,12 @@ def market_sell(symbol, qty):
         logging.error(f"Error placing sell order for {symbol}: {e}")
 
 
-def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=100000, stop_loss = 0.05):
+def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=100000, stop_loss = 0.01):
     logging.info(f"Backtesting portfolio from {start_date} to {end_date}")
     
     portfolio_balance = initial_balance
     total_trade_history = []
+    return_str = ''
 
     for symbol in symbols:
         logging.info(f"Backtesting {symbol} from {start_date} to {end_date}")
@@ -219,8 +220,11 @@ def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=1
         portfolio_balance += balance - (initial_balance / len(symbols))
         total_trade_history.extend(trade_history)
 
-        logging.info(f"Initial Balance: {initial_balance / len(symbols)}, Final Balance for {symbol}: {balance}")
+        # logging.info(f"Initial Balance: {initial_balance / len(symbols)}, Final Balance for {symbol}: {balance}")
+        return_str+=(f"Initial Balance: {initial_balance / len(symbols)}, Final Balance for {symbol}: {balance}\n")
 
-    logging.info(f"Portfolio Initial Balance: {initial_balance}, Final Portfolio Balance: {portfolio_balance}")
+    # logging.info(f"Portfolio Initial Balance: {initial_balance}, Final Portfolio Balance: {portfolio_balance}")
+    return_str+=(f"Portfolio Initial Balance: {initial_balance}, Final Portfolio Balance: {portfolio_balance}\n")
     
-    return portfolio_balance, total_trade_history
+    return return_str
+
