@@ -163,7 +163,10 @@ def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=1
             end=end_date.isoformat() + 'Z'
         ).df
         
-        data = calculate_indicators(data)
+        try:
+            data = calculate_indicators(data)
+        except KeyError:
+            return f"{symbol} is not the name of a real stock"
         
         position = 0  
         balance = portfolio_balance / len(symbols)  
