@@ -13,9 +13,9 @@ Frontend: Utilizes React.js for basic isualizations of data
 
 STRATEGIES
 Moving averages:
-- Very basic, checks where moving averages cross with long being 200 days and short being 50 days
+- Very basic, checks where moving averages cross with long being 15 days and short being 3 days
 - Buy signal (golden cross): short MA crosses above long MA
 - Sell signal (death cross): short MA crosses below long MA
-- Stop loss of 0.05 of investment
+- Stop loss of 0.01 of investment
 
 More testing strategies to be added
