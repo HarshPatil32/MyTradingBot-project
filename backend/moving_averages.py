@@ -149,6 +149,7 @@ def market_sell(symbol, qty):
 
 def backtest_strategy_crossover(symbols, start_date, end_date, initial_balance=100000, stop_loss = 0.01):
     logging.info(f"Backtesting portfolio from {start_date} to {end_date}")
+    logging.info(f'here are the symbols, {symbols}')
     
     portfolio_balance = initial_balance
     total_trade_history = []

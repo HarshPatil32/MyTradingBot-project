@@ -10,6 +10,7 @@ const MovingAverages = () => {
     const [errorMessage, setErrorMessage] = useState ('');
     const [myStocks, setMyStocks] = useState ([]);
     const [stockInput, setStockInput] = useState('');
+    const [results, setResults] = useState('');
 
     const handleStartDateChange = (e) => {
         setStartDate(e.target.value);
@@ -33,8 +34,10 @@ const MovingAverages = () => {
 
      const addStock = () => {
         if (stockInput.trim() !== '') {
+            console.log(myStocks.join(','));
             setMyStocks([...myStocks, stockInput.trim()]);
             setStockInput('');
+            setErrorMessage(''); // Clear error message when a stock is added
         }
      }
 
@@ -42,6 +45,27 @@ const MovingAverages = () => {
         const updatedStocks = myStocks.filter((_, i) => i !== index);
         setMyStocks(updatedStocks);
     };
+
+    const handleMovingAverages = async() => {
+        if (!startDate || !endDate || myStocks.length === 0) {
+            setErrorMessage('Please ensure valid dates and stocks are selected');
+            return;
+        }
+
+        try {
+            const response = await axios.get('http://localhost:5000/moving-averages', {
+                params: {
+                    stocks: myStocks.join(','),
+                    start_date: startDate,
+                    end_date: endDate
+                }
+            });
+            setResults(response.data);
+        } catch (error) {
+            console.error('Error fetching moving averages: ', error);
+            setErrorMessage('Failed to fetch moving averages');
+        }
+    }
 
     return (
         <div>
@@ -95,6 +119,19 @@ const MovingAverages = () => {
                     </li>
                 ))}
             </ul>
+
+            <button onClick={handleMovingAverages} className="fetch-data-button">Fetch Moving Averages</button>
+            {results && (
+                <div className="results">
+                    <h2>Backtest Results</h2>
+                    <pre 
+                        dangerouslySetInnerHTML={{
+                            __html: JSON.stringify(results, null, 2).replace(/\n/g, '<br />')
+                        }} 
+                    />
+                </div>
+)}
+
         </div>
         
     );
