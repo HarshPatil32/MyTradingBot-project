@@ -1,5 +1,6 @@
 import './MovingAverages.css';
 import React, { useState, Component } from 'react';
+import axios from 'axios';
 
 
 
@@ -36,6 +37,11 @@ const MovingAverages = () => {
             setStockInput('');
         }
      }
+
+     const deleteStock = (index) => {
+        const updatedStocks = myStocks.filter((_, i) => i !== index);
+        setMyStocks(updatedStocks);
+    };
 
     return (
         <div>
@@ -83,7 +89,10 @@ const MovingAverages = () => {
 
             <ul className="stock-list">
                 {myStocks.map((stock, index) => (
-                    <li key={index} className="stock-item">{stock}</li>
+                    <li key={index} className="stock-item">
+                        {stock}
+                        <button className="delete-button" onClick={() => deleteStock(index)}>X</button>
+                    </li>
                 ))}
             </ul>
         </div>

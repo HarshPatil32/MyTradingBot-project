@@ -49,3 +49,35 @@
 .stock-list {
     text-align: left;
 }
+
+.stock-item {
+    padding: 10px;
+    margin: 5px 0;
+    border: 1px solid #ddd;
+    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 200px; 
+    max-width: 100%; 
+    box-sizing: border-box; 
+}
+
+.delete-button {
+    display: none;
+    background-color: red;
+    color: white;
+    border: none;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    border-radius: 4px;
+}
+
+.stock-item:hover .delete-button {
+    display: inline-block;
+}
+
+.error-message {
+    color: red;
+}
