@@ -6,6 +6,7 @@ import logging
 from symbols import symbol
 from moving_averages import run_monitoring, backtest_strategy_crossover
 from datetime import datetime
+from test_against_SP import get_spy_investment
 
 
 app = Flask(__name__)
@@ -38,6 +39,23 @@ def get_moving_average_data():
 
     formatted_result = str.replace("\n", "<br />")
     return jsonify(formatted_result)
+
+
+@app.route('/spy-investment', methods=['GET'])
+def spy_investment():
+    start_date_str = request.args.get('start_date')
+    end_date_str = request.args.get('end_date')
+    initial_balance = request.args.get('initial_balance', default=100000, type=int)  
+
+    try:
+        start_date = datetime.fromisoformat(start_date_str)
+        end_date = datetime.fromisoformat(end_date_str)
+    except (ValueError, TypeError) as e:
+        return jsonify({"error": "Invalid input. Please provide 'start_date' and 'end_date' in ISO format."}), 400
+
+    final_balance = get_spy_investment(start_date, end_date, initial_balance)
+
+    return jsonify({"final_balance": final_balance})  
 
 
     
