@@ -97,7 +97,9 @@ const MovingAverages = () => {
     return (
         <div>
             <h1 className="page-title">Moving Averages Strategy</h1>
-            <p className="caption">Please choose the dates you want to test with</p>
+            <p className="caption">Please choose the dates you want to test with (Please don't
+            choose anything before 2016, Alpaca API doesn't have data before then)
+            </p>
             <div className="date-inputs">
                 <label htmlFor="start-date">Start Date: </label>
                 <input 
