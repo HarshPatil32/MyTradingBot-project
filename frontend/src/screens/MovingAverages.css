@@ -1,83 +1,78 @@
 .page-title {
-    font-size: 2rem; 
-    font-family: 'Arial', sans-serif; 
-    color: #333; 
+    font-size: 2.5rem;
+    font-family: 'Roboto', sans-serif;
+    color: #004d99;
     text-align: center;
+    margin-top: 20px;
 }
 
-.caption {
-    color: #333;
-    font-family: 'Arial', sans-serif;
-}
-
-.stocks-caption {
-    font-size: 15px;
-    color: #333;
-    font-family: 'Helvetica', sans-serif;
-    text-align: left;
+.caption, .stocks-caption {
+    color: #666;
+    font-size: 1rem;
     font-style: italic;
 }
 
 .error-message {
-    color: #f60404;
-    font-family: 'Times', Times;
+    color: #d9534f;
     font-weight: bold;
-
-}
-
-.stock-input-container {
-    text-align: left;
-}
-
-.stock-input {
-    text-align: left;
-    width: 15%;
-    height: 15px;
-    border-radius: 4px;
-    position: relative;
-    background-color: rgba(255, 255, 255, 0.3);
-    transition: 0.3s all;
-    border: 1px solid #ccc;
+    background: #ffe6e6;
     padding: 10px;
+    border-radius: 5px;
 }
 
-.stock-input:hover{
-    background-color: rgba(255, 255, 255, 0.45);
-    box-shadow: 0px 4px 20px 0px rgba(0, 0, 0, 0.05);
+.stock-input-container, .date-inputs, .spy-investment, .results {
+    background: #f9f9f9;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    padding: 20px;
+    margin: 20px;
 }
 
-.stock-list {
-    text-align: left;
+.stock-input, input[type="date"], input[type="number"] {
+    width: 100%;
+    padding: 12px;
+    margin-top: 5px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    box-sizing: border-box;
+}
+
+.fetch-data-button, .add-stock-button {
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #28a745, #218838);
+    color: #fff;
+    border: none;
+    border-radius: 50px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: 0.3s;
+}
+
+.fetch-data-button:hover, .add-stock-button:hover {
+    background: #218838;
 }
 
 .stock-item {
-    padding: 10px;
-    margin: 5px 0;
-    border: 1px solid #ddd;
-    position: relative;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    width: 200px; 
-    max-width: 100%; 
-    box-sizing: border-box; 
+    display: inline-block;
+    padding: 8px 15px;
+    margin: 5px;
+    border-radius: 20px;
+    background: #cce5ff;
+    font-size: 0.9rem;
 }
 
 .delete-button {
-    display: none;
-    background-color: red;
-    color: white;
+    background: none;
+    color: #d9534f;
     border: none;
-    padding: 4px 8px;
+    margin-left: 10px;
+    font-weight: bold;
     cursor: pointer;
-    font-size: 12px;
-    border-radius: 4px;
 }
 
-.stock-item:hover .delete-button {
-    display: inline-block;
-}
-
-.error-message {
-    color: red;
+.results pre {
+    font-size: 0.95rem;
+    color: #333;
+    white-space: pre-wrap;
+    line-height: 1.5;
 }

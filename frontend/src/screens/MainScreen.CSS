@@ -2,17 +2,19 @@
     font-size: 3rem; 
     font-family: 'Arial', sans-serif; 
     color: #333; 
-    text-align: center; 
+    text-align: center;
+    margin-top: 20px;
 }
 
 .strategy-title {
     font-size: 2rem; 
     font-family: 'Verdana', sans-serif; 
-    color: #555; 
+    color: #555;
     text-align: center;
+    margin-bottom: 10px;
 }
 
-.strategy-button{
+.strategy-button {
     margin-top: 20px;
     padding: 10px 20px;
     background-color: #3807fc;
@@ -23,4 +25,8 @@
     cursor: pointer;
     transition: background-color 0.3s ease;
     width: 140px;
-  }
+}
+
+.strategy-button:hover {
+    background-color: #2a06cc; 
+}
