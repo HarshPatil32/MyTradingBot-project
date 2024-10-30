@@ -7,7 +7,7 @@ from symbols import symbol
 from moving_averages import run_monitoring, backtest_strategy_crossover
 from datetime import datetime
 from test_against_SP import get_spy_investment
-
+from RSI_trading import backtest_strategy_RSI
 
 app = Flask(__name__)
 
@@ -40,6 +40,20 @@ def get_moving_average_data():
     formatted_result = str.replace("\n", "<br />")
     return jsonify(formatted_result)
 
+@app.route('/RSI-strategy', methods=['GET'])
+def rsi_strategy():
+    stocks = request.args.get('stocks')
+    start_date_str = request.args.get('start_date')
+    end_date_str = request.args.get('end_date')
+    
+    stock_list = stocks.split(',') if stocks else []
+    start_date_dt = datetime.strptime(start_date, '%Y-%m-%d')
+    end_date_dt = datetime.strptime(end_date, '%Y-%m-%d')
+    str = backtest_strategy_RSI(stock_list, start_date_dt, end_date_dt)
+
+    formatted_result = str.replace("\n", "<br />")
+    return jsonify(formatted_result)
+
 
 @app.route('/spy-investment', methods=['GET'])
 def spy_investment():
@@ -56,6 +70,8 @@ def spy_investment():
     final_balance = get_spy_investment(start_date, end_date, initial_balance)
 
     return jsonify({"final_balance": final_balance})  
+
+
 
 
     
