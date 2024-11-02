@@ -1,0 +1,78 @@
+.page-title {
+    font-size: 2.5rem;
+    font-family: 'Roboto', sans-serif;
+    color: #004d99;
+    text-align: center;
+    margin-top: 20px;
+}
+
+.caption, .stocks-caption {
+    color: #666;
+    font-size: 1rem;
+    font-style: italic;
+}
+
+.error-message {
+    color: #d9534f;
+    font-weight: bold;
+    background: #ffe6e6;
+    padding: 10px;
+    border-radius: 5px;
+}
+
+.stock-input-container, .date-inputs, .spy-investment, .results {
+    background: #f9f9f9;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    padding: 20px;
+    margin: 20px;
+}
+
+.stock-input, input[type="date"], input[type="number"] {
+    width: 100%;
+    padding: 12px;
+    margin-top: 5px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    box-sizing: border-box;
+}
+
+.fetch-data-button, .add-stock-button {
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #28a745, #218838);
+    color: #fff;
+    border: none;
+    border-radius: 50px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: 0.3s;
+}
+
+.fetch-data-button:hover, .add-stock-button:hover {
+    background: #218838;
+}
+
+.stock-item {
+    display: inline-block;
+    padding: 8px 15px;
+    margin: 5px;
+    border-radius: 20px;
+    background: #cce5ff;
+    font-size: 0.9rem;
+}
+
+.delete-button {
+    background: none;
+    color: #d9534f;
+    border: none;
+    margin-left: 10px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.results pre {
+    font-size: 0.95rem;
+    color: #333;
+    white-space: pre-wrap;
+    line-height: 1.5;
+}
