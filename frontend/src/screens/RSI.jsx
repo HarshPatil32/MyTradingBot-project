@@ -51,7 +51,7 @@ const RSITrading = () => {
         setMyStocks(updatedStocks);
     };
 
-    const handleMovingAverages = async() => {
+    const handleRSI = async() => {
         if (!startDate || !endDate || myStocks.length === 0) {
             setErrorMessage('Please ensure valid dates and stocks are selected');
             return;
@@ -161,7 +161,7 @@ const RSITrading = () => {
                 <button onClick={addStock} className="add-stock-button">Add Stock</button>
             </div>
 
-            <button onClick={handleMovingAverages} className="fetch-data-button">Fetch RSI data</button>
+            <button onClick={handleRSI} className="fetch-data-button">Fetch RSI data</button>
             {results && (
                 <div className="results">
                     <h2>Backtest Results</h2>

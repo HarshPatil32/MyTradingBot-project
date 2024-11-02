@@ -45,11 +45,12 @@ def rsi_strategy():
     stocks = request.args.get('stocks')
     start_date_str = request.args.get('start_date')
     end_date_str = request.args.get('end_date')
+    initial_balance = request.args.get('initial_balance', default=100000, type=int)  
     
     stock_list = stocks.split(',') if stocks else []
-    start_date_dt = datetime.strptime(start_date, '%Y-%m-%d')
-    end_date_dt = datetime.strptime(end_date, '%Y-%m-%d')
-    str = backtest_strategy_RSI(stock_list, start_date_dt, end_date_dt)
+    start_date_dt = datetime.strptime(start_date_str, '%Y-%m-%d')
+    end_date_dt = datetime.strptime(end_date_str, '%Y-%m-%d')
+    str = backtest_strategy_RSI(stock_list, start_date_dt, end_date_dt, initial_balance)
 
     formatted_result = str.replace("\n", "<br />")
     return jsonify(formatted_result)

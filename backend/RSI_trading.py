@@ -44,7 +44,11 @@ def backtest_strategy_RSI(symbols, start_date, end_date, initial_balance=100000,
 
     for symbol in symbols:
         
-        data = get_historical_data(symbol)
+        data = api.get_bars(
+            symbol, TimeFrame.Day, 
+            start=start_date.isoformat() + 'Z', 
+            end=end_date.isoformat() + 'Z'
+        ).df
         
         try:
             data = calculate_indicators(data)
