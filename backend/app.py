@@ -8,6 +8,7 @@ from moving_averages import run_monitoring, backtest_strategy_crossover
 from datetime import datetime
 from test_against_SP import get_spy_investment
 from RSI_trading import backtest_strategy_RSI
+from MACD_trading import backtest_strategy_MACD
 
 app = Flask(__name__)
 
@@ -51,6 +52,21 @@ def rsi_strategy():
     start_date_dt = datetime.strptime(start_date_str, '%Y-%m-%d')
     end_date_dt = datetime.strptime(end_date_str, '%Y-%m-%d')
     str = backtest_strategy_RSI(stock_list, start_date_dt, end_date_dt, initial_balance)
+
+    formatted_result = str.replace("\n", "<br />")
+    return jsonify(formatted_result)
+
+@app.route('/MACD-strategy', methods=['GET'])
+def rsi_strategy():
+    stocks = request.args.get('stocks')
+    start_date_str = request.args.get('start_date')
+    end_date_str = request.args.get('end_date')
+    initial_balance = request.args.get('initial_balance', default=100000, type=int)  
+    
+    stock_list = stocks.split(',') if stocks else []
+    start_date_dt = datetime.strptime(start_date_str, '%Y-%m-%d')
+    end_date_dt = datetime.strptime(end_date_str, '%Y-%m-%d')
+    str = backtest_strategy_MACD(stock_list, start_date_dt, end_date_dt, initial_balance)
 
     formatted_result = str.replace("\n", "<br />")
     return jsonify(formatted_result)
@@ -105,9 +121,9 @@ if __name__ == "__main__":
 
     start_date = datetime(2019, 1, 1)  
     end_date = datetime(2024, 1, 1)
-    symbols = ["uyvufyi"]  
+    symbols = ["SPY", "PG"]  
 
-    print(backtest_strategy_crossover(symbols, start_date, end_date))
+    print(backtest_strategy_MACD(symbols, start_date, end_date))
 
     # app.run()
 
