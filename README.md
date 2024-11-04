@@ -24,5 +24,14 @@ RSI:
 - Buys if RSI < 30
 - Definitely safe strategy and can give positive gains, but not as optimal as other strategies
 
+MACD Divergence:
+- Checks when price of an asset and the MACD indicator are moving in opposite directions
+- MACD line: calculates by subtracting 26-period EMA from the 12-period EMA
+- Signal line: 9-period EMA of the MACD line itself
+- Histogram: Bars that represent the difference between the signal line and MACD line
+- If market is showing lower lows and MACD shows higher lows, signs of bullish divergence and vice versa
+- Trailing stop loss of 0.05 (can be less since MACD line reacts quicker)
+- So far tends to beat the market
+
 
 More testing strategies to be added
