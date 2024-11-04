@@ -25,6 +25,11 @@ const MainScreen = () => {
                 className="strategy-button"> 
                 RSI
             </button>
+            <button
+                onClick={() => handleButton('/MACD-trading')}
+                className="strategy-button">
+                MACD Divergence
+            </button>
         </div>
     );
 };
