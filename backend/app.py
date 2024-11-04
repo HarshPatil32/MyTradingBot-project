@@ -57,7 +57,7 @@ def rsi_strategy():
     return jsonify(formatted_result)
 
 @app.route('/MACD-strategy', methods=['GET'])
-def rsi_strategy():
+def MACD_strategy():
     stocks = request.args.get('stocks')
     start_date_str = request.args.get('start_date')
     end_date_str = request.args.get('end_date')
