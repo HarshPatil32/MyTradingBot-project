@@ -3,9 +3,10 @@ Trading Bot with frontend and backend
 
 Backend: Utilized python-flask as well as alpaca api in order for trading
 - Alpaca with api key and secret key connects to my paper trading account and allows me to test the algorithm in live time
-- Backtesting route will allow you to choose any two dates to test the algorithm between, currently beats the S&P
+- Backtesting route will allow you to choose any two dates to test the algorithm between, currently beats the S&P based on which
+securities you choose
 - Uses talib for financial indicators
-- Alpaca stock data does not go farther back than 2016 so that is a handicap as of now but beats S&P all other years
+- Alpaca stock data does not go farther back than 2016 so that is a handicap as of now
 
 Frontend: Utilizes React.js for basic isualizations of data
 - Stock by stock growth patters based on chosen strategy
@@ -17,5 +18,11 @@ Moving averages:
 - Buy signal (golden cross): short MA crosses above long MA
 - Sell signal (death cross): short MA crosses below long MA
 - Stop loss of 0.01 of investment
+
+RSI:
+- Sells if hits trailing stop loss or RSI exceeds 70
+- Buys if RSI < 30
+- Definitely safe strategy and can give positive gains, but not as optimal as other strategies
+
 
 More testing strategies to be added
