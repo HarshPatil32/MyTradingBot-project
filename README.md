@@ -41,6 +41,18 @@ slow period and signal period
     - Runs 25 iterations with each of the above
 - Overall time tradeoffs are worth the gains as it is a few extra seconds
 
+BEST STOCKS FOR MACD STRAT:
+- Mid cap
+- Avg volume > 500k
+    - Sufficient liquidity and limits slippage
+- Beta > 1.5
+- Price performance (month up)
+    - Not necessary just helps
+- Price above SMA50
+    - Also not necessary but I found it helps
+- Relative volume > 1.5
+
+
 
 
 More testing strategies to be added
