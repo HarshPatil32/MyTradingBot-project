@@ -32,6 +32,16 @@ MACD Divergence:
 - If market is showing lower lows and MACD shows higher lows, signs of bullish divergence and vice versa
 - Trailing stop loss of 0.05 (can be less since MACD line reacts quicker)
 - So far tends to beat the market
+- Since this is the most promising algorithm as of now, added Bayesian optimization to find best parameters for fast period
+slow period and signal period
+- Gives about 5-15% extra returns than original parameters
+- Takes some extra time:
+    - Uses backtest_strategy_MACD as objective function
+    - Re-training Gaussian process
+    - 100 random points for acquisition optmization
+    - Runs 25 iterations with each of the above
+- Overall time tradeoffs are worth the gains as it is a few extra seconds
+
 
 
 More testing strategies to be added
