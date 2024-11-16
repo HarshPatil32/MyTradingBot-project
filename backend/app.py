@@ -66,7 +66,7 @@ def MACD_strategy():
     stock_list = stocks.split(',') if stocks else []
     start_date_dt = datetime.strptime(start_date_str, '%Y-%m-%d')
     end_date_dt = datetime.strptime(end_date_str, '%Y-%m-%d')
-    str = backtest_strategy_MACD(stock_list, start_date_dt, end_date_dt, initial_balance)
+    str, _ = backtest_strategy_MACD(stock_list, start_date_dt, end_date_dt, initial_balance)
 
     formatted_result = str.replace("\n", "<br />")
     return jsonify(formatted_result)

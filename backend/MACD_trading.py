@@ -21,11 +21,11 @@ url = "https://paper-api.alpaca.markets"
 
 api = tradeapi.REST(API_KEY_ID, API_SECRET_KEY, url)
 
-def calculate_indicators(data):
-    data['MACD'], data['Signal'], data['Hist'] = talib.MACD(data['close'], fastperiod=12, slowperiod=26, signalperiod=9)
+def calculate_indicators(data, fastperiod, slowperiod, signalperiod):
+    data['MACD'], data['Signal'], data['Hist'] = talib.MACD(data['close'], fastperiod=fastperiod, slowperiod=slowperiod, signalperiod=signalperiod)
     return data
 
-def backtest_strategy_MACD(symbols, start_date, end_date, initial_balance=100000, trailing_stop_loss=0.05):
+def backtest_strategy_MACD(symbols, start_date, end_date, initial_balance=100000, trailing_stop_loss=0.1, fastperiod=12, slowperiod=26, signalperiod=9):
     portfolio_balance = initial_balance
     total_trade_history = []
     return_str = ''
@@ -39,7 +39,7 @@ def backtest_strategy_MACD(symbols, start_date, end_date, initial_balance=100000
         ).df
 
         try:
-            data = calculate_indicators(data)
+            data = calculate_indicators(data, fastperiod, slowperiod, signalperiod)
         except KeyError:
             return f"{symbol} is not the name of a real stock"
         
@@ -93,7 +93,7 @@ def backtest_strategy_MACD(symbols, start_date, end_date, initial_balance=100000
         return_str += (f"Initial Balance: {initial_balance / len(symbols)}, Final Balance for {symbol}: {balance}\n")
 
     return_str += (f"Portfolio Initial Balance: {initial_balance}, Final Portfolio Balance: {portfolio_balance}\n")
-    return return_str
+    return return_str, portfolio_balance
         
 
 
