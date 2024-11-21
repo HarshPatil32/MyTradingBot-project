@@ -25,7 +25,7 @@ def calculate_indicators(data, fastperiod, slowperiod, signalperiod):
     data['MACD'], data['Signal'], data['Hist'] = talib.MACD(data['close'], fastperiod=fastperiod, slowperiod=slowperiod, signalperiod=signalperiod)
     return data
 
-def backtest_strategy_MACD(symbols, start_date, end_date, initial_balance=100000, trailing_stop_loss=0.1, fastperiod=12, slowperiod=26, signalperiod=9):
+def backtest_strategy_MACD(symbols, start_date, end_date, initial_balance=100000, trailing_stop_loss=0.15, fastperiod=12, slowperiod=26, signalperiod=9):
     portfolio_balance = initial_balance
     total_trade_history = []
     return_str = ''
@@ -71,18 +71,18 @@ def backtest_strategy_MACD(symbols, start_date, end_date, initial_balance=100000
                 if position > 0:
                     highest_price = max(highest_price, price)
 
-                if position > 0 and (macd_line < signal_line or price <= highest_price * (1 - trailing_stop_loss)):
-                    balance += position * price
-                    trade_history.append({
-                    'symbol': symbol,
-                    'action': 'sell',
-                    'price': price,
-                    'qty': qty,
-                    'date': data.index[index]
-                    })
-                    position = 0
-                    purchase_price = None
-                    highest_price = None
+            if position > 0 and (macd_line < signal_line or price <= highest_price * (1 - trailing_stop_loss)):
+                balance += position * price
+                trade_history.append({
+                'symbol': symbol,
+                'action': 'sell',
+                'price': price,
+                'qty': qty,
+                'date': data.index[index]
+                })
+                position = 0
+                purchase_price = None
+                highest_price = None
 
         if position > 0:
             balance += position * data['close'].iloc[-1]
