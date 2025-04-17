@@ -1,59 +1,52 @@
-import './MovingAverages.css';
-import React, { useState, Component } from 'react';
+import React, { useState } from 'react';
 import axios from 'axios';
-
-
+import './MACD.css';
 
 const MACDTrading = () => {
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
-    const [errorMessage, setErrorMessage] = useState ('');
-    const [myStocks, setMyStocks] = useState ([]);
+    const [errorMessage, setErrorMessage] = useState('');
+    const [myStocks, setMyStocks] = useState([]);
     const [stockInput, setStockInput] = useState('');
-    const [results, setResults] = useState('');
-    const [initialBalance, setInitialBalance] = useState(100000); 
+    const [initialBalance, setInitialBalance] = useState(100000);
+    const [backtestResult, setBacktestResult] = useState(null);
     const [spyFinalBalance, setSpyFinalBalance] = useState(null);
 
-    const handleStartDateChange = (e) => {
-        setStartDate(e.target.value);
-    };
+    const handleStartDateChange = (e) => setStartDate(e.target.value);
+    const handleEndDateChange = (e) => setEndDate(e.target.value);
+    const handleStockInputChange = (e) => setStockInput(e.target.value);
 
-    const handleEndDateChange = (e) => {
-        setEndDate(e.target.value);
-    };
-
-
-    const makeSureValidDate = () => {
-        if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
-            setErrorMessage('Please choose valid dates: the date cannot start after the end date');
-        } else {
-            setErrorMessage('');
-        }
-    };
-
-     const handleStockInputChange = (e) => {
-        setStockInput(e.target.value);
-     }
-
-     const addStock = () => {
-        const trimmedStock = stockInput.trim();
-        if (trimmedStock !== '' && !myStocks.includes(trimmedStock.toUpperCase())) {
-            setMyStocks([...myStocks, trimmedStock.toUpperCase()]);
+    const addStock = () => {
+        const trimmed = stockInput.trim().toUpperCase();
+        if (trimmed && !myStocks.includes(trimmed)) {
+            setMyStocks([...myStocks, trimmed]);
             setStockInput('');
-            setErrorMessage(''); 
-        } else if (myStocks.includes(trimmedStock.toUpperCase())) {
+            setErrorMessage('');
+        } else if (myStocks.includes(trimmed)) {
             setErrorMessage('Stock already added.');
         }
     };
 
-     const deleteStock = (index) => {
+    const deleteStock = (index) => {
         const updatedStocks = myStocks.filter((_, i) => i !== index);
         setMyStocks(updatedStocks);
     };
 
-    const handleMACD = async() => {
-        if (!startDate || !endDate || myStocks.length === 0) {
-            setErrorMessage('Please ensure valid dates and stocks are selected');
+    const validateInputs = () => {
+        if (!startDate || !endDate || new Date(startDate) > new Date(endDate)) {
+            setErrorMessage('Please select a valid date range.');
+            return false;
+        }
+        if (!initialBalance || isNaN(initialBalance) || Number(initialBalance) <= 0) {
+            setErrorMessage('Please enter a valid initial investment amount.');
+            return false;
+        }
+        return true;
+    };
+
+    const runBacktest = async () => {
+        if (!validateInputs() || myStocks.length === 0) {
+            setErrorMessage('Please ensure valid dates and at least one stock is selected.');
             return;
         }
 
@@ -66,12 +59,14 @@ const MACDTrading = () => {
                     initial_balance: initialBalance
                 }
             });
-            setResults(response.data);
+
+            setBacktestResult(response.data);
+            setErrorMessage('');
         } catch (error) {
-            console.error('Error fetching MACD data: ', error);
+            console.error('Error fetching MACD data:', error);
             setErrorMessage('Failed to fetch MACD data');
         }
-    }
+    };
 
     const handleSpyInvestment = async () => {
         if (!startDate || !endDate || !initialBalance) {
@@ -96,96 +91,79 @@ const MACDTrading = () => {
     };
 
     return (
-        <div>
-            <h1 className="page-title">MACD divergence Strategy</h1>
-            <p className="caption">Please choose the dates you want to test with (Please don't
-            choose anything before 2016, Alpaca API doesn't have data before then)
-            </p>
-            <div className="date-inputs">
-                <label htmlFor="start-date">Start Date: </label>
-                <input 
-                    type="date" 
-                    id="start-date" 
-                    name="startDate" 
-                    value={startDate} 
-                    onChange={(e) => {
-                        handleStartDateChange(e);
-                        makeSureValidDate();
-                    }}
-                />
-                
-                <label htmlFor="end-date">End Date: </label>
-                <input 
-                    type="date" 
-                    id="end-date" 
-                    name="endDate" 
-                    value={endDate} 
-                    onChange={(e) => {
-                        handleEndDateChange(e);
-                        makeSureValidDate();
-                    }} 
-                />
-            </div>
+        <div className="macd-wrapper">
+            <div className="macd-card">
+                <h1 className="macd-title">📈 MACD Divergence Strategy Simulator</h1>
+                <p className="macd-description">
+                    Backtest a MACD-based trading strategy using your chosen stocks and compare it against investing the same amount in the SPY ETF.
+                </p>
 
-            <h2>SPY Investment Calculator</h2>
-            <div className="spy-investment">
-                <label>Initial Investment ($):</label>
-                <input
-                    type="number"
-                    value={initialBalance}
-                    onChange={(e) => setInitialBalance(e.target.value)}
-                />
-                <button onClick={handleSpyInvestment} className="fetch-data-button">Calculate SPY Investment</button>
-                {spyFinalBalance !== null && (
-                    <div className="spy-results">
-                        <h3>Investment Results</h3>
-                        <p>Initial Investment: ${initialBalance}</p>
-                        <p>Final Balance: ${spyFinalBalance.toFixed(2)}</p>
+                <div className="macd-section">
+                    <h2 className="section-title">1. Select Date Range</h2>
+                    <div className="input-row">
+                        <label>Start Date:</label>
+                        <input type="date" value={startDate} onChange={handleStartDateChange} />
+                        <label>End Date:</label>
+                        <input type="date" value={endDate} onChange={handleEndDateChange} />
+                    </div>
+                </div>
+
+                <div className="macd-section">
+                    <h2 className="section-title">2. Set Investment Amount</h2>
+                    <p className="small-note">This amount will be used for both the MACD strategy and SPY comparison.</p>
+                    <input
+                        type="number"
+                        value={initialBalance}
+                        onChange={(e) => setInitialBalance(e.target.value)}
+                        placeholder="e.g., 100000"
+                    />
+                    <button onClick={handleSpyInvestment}>💼 Calculate SPY Investment</button>
+                    {spyFinalBalance !== null && (
+                        <div className="spy-results">
+                            <h3>SPY Investment Results</h3>
+                            <p>Initial Investment: ${initialBalance}</p>
+                            <p>Final Balance: ${Number(spyFinalBalance).toFixed(2)}</p>
+                        </div>
+                    )}
+                </div>
+
+                <div className="macd-section">
+                    <h2 className="section-title">3. Choose Stocks to Trade with MACD</h2>
+                    <div className="input-row">
+                        <input
+                            type="text"
+                            value={stockInput}
+                            onChange={handleStockInputChange}
+                            placeholder="e.g., AAPL"
+                        />
+                        <button onClick={addStock}>Add Stock</button>
+                    </div>
+                    <ul className="stock-list">
+                        {myStocks.map((stock, idx) => (
+                            <li key={idx} className="stock-item">
+                                {stock}
+                                <button className="delete-button" onClick={() => deleteStock(idx)}>X</button>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+
+                {errorMessage && <div className="error-box">{errorMessage}</div>}
+
+                <div className="macd-footer">
+                    <button onClick={runBacktest}>🚀 Run Backtest</button>
+                </div>
+
+                {backtestResult && (
+                    <div className="macd-section">
+                        <h2 className="section-title">📊 Backtest Results</h2>
+                        <pre className="result-box">
+                            {JSON.stringify(backtestResult, null, 2)}
+                        </pre>
                     </div>
                 )}
             </div>
-
-
-            <p className ="stocks-caption"> Please choose which stocks you would like to trade with</p>
-            {errorMessage && (
-                <p className="error-message">{errorMessage}</p>  
-            )}
-            <div className="stock-input-container">
-                <input 
-                    type="text" 
-                    value={stockInput} 
-                    onChange={handleStockInputChange} 
-                    placeholder="Enter stock symbol"
-                    className="stock-input"
-                />
-                <button onClick={addStock} className="add-stock-button">Add Stock</button>
-            </div>
-
-            <button onClick={handleMACD} className="fetch-data-button">Fetch data</button>
-            {results && (
-                <div className="results">
-                    <h2>Backtest Results</h2>
-                    <pre 
-                        dangerouslySetInnerHTML={{
-                            __html: JSON.stringify(results, null, 2).replace(/\n/g, '<br />')
-                        }} 
-                    />
-                </div>
-            )}
-
-            <ul className="stock-list">
-                {myStocks.map((stock, index) => (
-                    <li key={index} className="stock-item">
-                        {stock}
-                        <button className="delete-button" onClick={() => deleteStock(index)}>X</button>
-                    </li>
-                ))}
-            </ul>
-
-            
-
         </div>
-        
     );
 };
 
