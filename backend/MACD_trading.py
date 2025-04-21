@@ -18,7 +18,6 @@ url = "https://paper-api.alpaca.markets"
 
 
 
-
 api = tradeapi.REST(API_KEY_ID, API_SECRET_KEY, url)
 
 def calculate_indicators(data, fastperiod, slowperiod, signalperiod):
@@ -90,9 +89,16 @@ def backtest_strategy_MACD(symbols, start_date, end_date, initial_balance=100000
         portfolio_balance += balance - (initial_balance / len(symbols))
         total_trade_history.extend(trade_history)
 
-        return_str += (f"Initial Balance: {initial_balance / len(symbols)}, Final Balance for {symbol}: {balance}\n")
 
-    return_str += (f"Portfolio Initial Balance: {initial_balance}, Final Portfolio Balance: {portfolio_balance}\n")
+        return_str += (
+            f"Initial Balance: ${initial_balance / len(symbols):,.2f}, "
+            f"Final Balance for {symbol}: ${balance:,.2f}\n"
+        )
+
+        return_str += (
+            f"Portfolio Initial Balance: ${initial_balance:,.2f}, "
+            f"Final Portfolio Balance: ${portfolio_balance:,.2f}\n"
+        )
     return return_str, portfolio_balance
         
 

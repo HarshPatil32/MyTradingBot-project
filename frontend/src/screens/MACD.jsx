@@ -157,9 +157,10 @@ const MACDTrading = () => {
                 {backtestResult && (
                     <div className="macd-section">
                         <h2 className="section-title">📊 Backtest Results</h2>
-                        <pre className="result-box">
-                            {JSON.stringify(backtestResult, null, 2)}
-                        </pre>
+                        <div
+                            className="result-box"
+                            dangerouslySetInnerHTML={{ __html: backtestResult }}
+                        />
                     </div>
                 )}
             </div>
