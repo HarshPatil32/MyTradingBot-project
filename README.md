@@ -1,8 +1,11 @@
 # MyTrading-Bot-project
 
 HOW TO RUN:
-- Set up frontend with 'npm run dev'
-- Set up backend with 'flask run'
+- 'cd frontend'
+    - Set up frontend with 'npm run dev'
+- 'cd backend' in new terminal
+    -   Set up backend with 'flask run'
+- Navigate to http://localhost:5173/
 - Choose which strategy, frontend doesn't look pretty but only used to visualize gains/losses
 
 Trading Bot with frontend and backend
