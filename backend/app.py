@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from dotenv import load_dotenv
 import logging
+import os
 from datetime import datetime
 from test_against_SP import get_spy_investment, generate_spy_monthly_performance
 from MACD_trading import backtest_strategy_MACD, generate_monthly_performance
@@ -9,13 +10,13 @@ from optimize_MACD import optimize_macd_parameters
 
 app = Flask(__name__)
 
-# Configure CORS properly - be more specific about origins
+# Configure CORS properly - allow all origins for now (you can restrict this later)
 CORS(app, resources={
     r"/*": {
-        "origins": ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"],
+        "origins": "*",  # Allow all origins for deployment
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True
+        "supports_credentials": False  # Set to False when allowing all origins
     }
 })
 
@@ -158,9 +159,12 @@ def spy_investment():
         logger.error(f"SPY investment error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+# Load environment variables
+load_dotenv()
+
 if __name__ == "__main__":
-    # Load environment variables
-    load_dotenv()
+    # Get port from environment variable (Render provides this) or default to 5001
+    port = int(os.environ.get('PORT', 5001))
     
-    # Run the app with debug mode and specific host/port
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    # Run the app on all interfaces for Render deployment
+    app.run(host='0.0.0.0', port=port, debug=False)

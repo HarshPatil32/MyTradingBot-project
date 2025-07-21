@@ -7,6 +7,10 @@ const MACDTrading = () => {
     // API URL from environment variables
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
     
+    // Debug: Log API URL
+    console.log('API_URL:', API_URL);
+    console.log('Environment variables:', import.meta.env);
+    
     // State management
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
