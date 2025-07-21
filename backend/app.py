@@ -6,9 +6,9 @@ import logging
 from symbols import symbol
 from moving_averages import run_monitoring, backtest_strategy_crossover
 from datetime import datetime
-from test_against_SP import get_spy_investment
+from test_against_SP import get_spy_investment, generate_spy_monthly_performance
 from RSI_trading import backtest_strategy_RSI
-from MACD_trading import backtest_strategy_MACD
+from MACD_trading import backtest_strategy_MACD, generate_monthly_performance
 from optimize_MACD import optimize_macd_parameters
 
 app = Flask(__name__)
@@ -161,6 +161,17 @@ def MACD_strategy():
             
             formatted_result = str_result.replace("\n", "<br />")
             
+            # Generate monthly performance data for charting
+            monthly_data = generate_monthly_performance(
+                stock_list,
+                start_date_dt,
+                end_date_dt,
+                initial_balance,
+                fastperiod=optimized_params['fastperiod'],
+                slowperiod=optimized_params['slowperiod'],
+                signalperiod=optimized_params['signalperiod']
+            )
+            
             # Return both the backtest result and optimized parameters
             return jsonify({
                 "backtest_result": formatted_result,
@@ -168,7 +179,8 @@ def MACD_strategy():
                 "optimization_performance": {
                     "best_balance": optimization_result['best_balance'],
                     "total_return": optimization_result['total_return']
-                }
+                },
+                "monthly_performance": monthly_data
             }), 200
         else:
             # Run backtest with default parameters (legacy behavior)
@@ -200,7 +212,12 @@ def spy_investment():
         logger.info(f"Processing SPY investment for dates: {start_date_str} to {end_date_str}")
         
         final_balance = get_spy_investment(start_date, end_date, initial_balance)
-        return jsonify({"final_balance": final_balance}), 200
+        monthly_data = generate_spy_monthly_performance(start_date, end_date, initial_balance)
+        
+        return jsonify({
+            "final_balance": final_balance,
+            "monthly_performance": monthly_data
+        }), 200
         
     except Exception as e:
         logger.error(f"SPY investment error: {str(e)}")

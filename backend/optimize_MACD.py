@@ -6,6 +6,11 @@ import random
 from MACD_trading import backtest_strategy_MACD
 from datetime import datetime
 
+# Set random seeds for deterministic results - must be set each time the function is called
+def set_random_seeds():
+    np.random.seed(42)
+    random.seed(42)
+
 parameter_bounds = {
     'fastperiod': (8, 15),
     'slowperiod': (20, 30),
@@ -16,6 +21,8 @@ def optimize_macd_parameters(symbols, start_date, end_date, initial_balance=1000
     """
     Optimize MACD parameters for given stocks and date range using Bayesian optimization
     """
+    # Reset random seeds at the start of each optimization
+    set_random_seeds()
 
     
     def objective(parameters):
@@ -37,7 +44,13 @@ def optimize_macd_parameters(symbols, start_date, end_date, initial_balance=1000
             return -initial_balance  # Return negative initial balance if error occurs
 
     kernel = Matern(nu=2.5)
-    gp = GaussianProcessRegressor(kernel=kernel, alpha=1e-5, normalize_y=True, n_restarts_optimizer=10)
+    gp = GaussianProcessRegressor(
+        kernel=kernel, 
+        alpha=1e-5, 
+        normalize_y=True, 
+        n_restarts_optimizer=10,
+        random_state=42  # Add random state for deterministic results
+    )
 
     def generate_initial_samples(n_samples=5):
         return [
@@ -64,18 +77,28 @@ def optimize_macd_parameters(symbols, start_date, end_date, initial_balance=1000
         
         next_sample = []
         best_acq_value = float('inf')
-        for _ in range(100):
+        
+        # Use deterministic sampling instead of random
+        np.random.seed(42 + i)  # Different seed per iteration but still deterministic
+        random.seed(42 + i)
+        
+        for j in range(100):
             random_sample = [
                 random.uniform(*parameter_bounds['fastperiod']),
                 random.uniform(*parameter_bounds['slowperiod']),
                 random.uniform(*parameter_bounds['signalperiod'])
             ]
 
-            res = minimize(acquisition, random_sample, bounds=[
-                parameter_bounds['fastperiod'], 
-                parameter_bounds['slowperiod'], 
-                parameter_bounds['signalperiod']
-            ])
+            res = minimize(
+                acquisition, 
+                random_sample, 
+                bounds=[
+                    parameter_bounds['fastperiod'], 
+                    parameter_bounds['slowperiod'], 
+                    parameter_bounds['signalperiod']
+                ],
+                method='L-BFGS-B'  # Use deterministic method
+            )
             if res.fun < best_acq_value:
                 best_acq_value = res.fun
                 next_sample = res.x

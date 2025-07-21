@@ -218,61 +218,76 @@ const MACDTrading = () => {
             // Set SPY final balance
             setSpyFinalBalance(spyResponse.data.final_balance);
 
-            // Generate realistic chart data based on actual performance
+            // Use real monthly performance data from backend
             const generateChartData = () => {
-                const dataPoints = 12; // 12 months of data
-                const chartData = [];
-                const optimizationPerf = macdResponse.data.optimization_performance;
+                const macdMonthlyData = macdResponse.data.monthly_performance;
+                const spyMonthlyData = spyResponse.data.monthly_performance;
                 
-                if (optimizationPerf && spyResponse.data.final_balance) {
-                    const macdFinalBalance = optimizationPerf.best_balance;
-                    const spyFinalBalance = spyResponse.data.final_balance;
+                if (macdMonthlyData && spyMonthlyData) {
+                    // Combine both datasets for chart
+                    const maxLength = Math.max(macdMonthlyData.length, spyMonthlyData.length);
+                    const chartData = [];
                     
-                    // Calculate the growth rates
-                    const macdTotalReturn = (macdFinalBalance - initialBalance) / initialBalance;
-                    const spyTotalReturn = (spyFinalBalance - initialBalance) / initialBalance;
-                    
-                    // Convert to monthly returns (assuming equal growth over time)
-                    const macdMonthlyReturn = Math.pow(1 + macdTotalReturn, 1/dataPoints) - 1;
-                    const spyMonthlyReturn = Math.pow(1 + spyTotalReturn, 1/dataPoints) - 1;
-                    
-                    let macdBalance = initialBalance;
-                    let spyBalance = initialBalance;
-                    
-                    for (let i = 0; i <= dataPoints; i++) {
-                        chartData.push({
-                            month: i === 0 ? 'Start' : `Month ${i}`,
-                            MACD: Math.round(macdBalance),
-                            SPY: Math.round(spyBalance)
-                        });
+                    for (let i = 0; i < maxLength; i++) {
+                        const macdPoint = macdMonthlyData[i] || macdMonthlyData[macdMonthlyData.length - 1];
+                        const spyPoint = spyMonthlyData[i] || spyMonthlyData[spyMonthlyData.length - 1];
                         
-                        // Add some realistic volatility while maintaining the final target
-                        if (i < dataPoints) {
-                            const volatilityFactor = 1 + (Math.random() - 0.5) * 0.15; // ±7.5% monthly volatility
-                            macdBalance *= (1 + macdMonthlyReturn) * volatilityFactor;
-                            spyBalance *= (1 + spyMonthlyReturn) * volatilityFactor;
-                            
-                            // Ensure we don't go below 50% of initial investment
-                            macdBalance = Math.max(macdBalance, initialBalance * 0.5);
-                            spyBalance = Math.max(spyBalance, initialBalance * 0.5);
-                        }
+                        chartData.push({
+                            month: macdPoint.month,
+                            MACD: Math.round(macdPoint.balance),
+                            SPY: Math.round(spyPoint.balance)
+                        });
                     }
                     
-                    // Adjust final values to match actual results
-                    chartData[chartData.length - 1].MACD = Math.round(macdFinalBalance);
-                    chartData[chartData.length - 1].SPY = Math.round(spyFinalBalance);
-                    
+                    return chartData;
                 } else {
-                    // Fallback if no optimization performance data
-                    for (let i = 0; i <= dataPoints; i++) {
-                        chartData.push({
-                            month: i === 0 ? 'Start' : `Month ${i}`,
-                            MACD: Math.round(initialBalance * (1 + (Math.random() * 0.3 - 0.1))),
-                            SPY: Math.round(initialBalance * (1 + (Math.random() * 0.2 - 0.05)))
-                        });
+                    // Fallback to simple calculation if no monthly data
+                    const optimizationPerf = macdResponse.data.optimization_performance;
+                    if (optimizationPerf && spyResponse.data.final_balance) {
+                        const dataPoints = 12;
+                        const chartData = [];
+                        const macdFinalBalance = optimizationPerf.best_balance;
+                        const spyFinalBalance = spyResponse.data.final_balance;
+                        
+                        const macdTotalReturn = (macdFinalBalance - initialBalance) / initialBalance;
+                        const spyTotalReturn = (spyFinalBalance - initialBalance) / initialBalance;
+                        
+                        const macdMonthlyReturn = Math.pow(1 + macdTotalReturn, 1/dataPoints) - 1;
+                        const spyMonthlyReturn = Math.pow(1 + spyTotalReturn, 1/dataPoints) - 1;
+                        
+                        let macdBalance = initialBalance;
+                        let spyBalance = initialBalance;
+                        
+                        for (let i = 0; i <= dataPoints; i++) {
+                            chartData.push({
+                                month: i === 0 ? 'Start' : `Month ${i}`,
+                                MACD: Math.round(macdBalance),
+                                SPY: Math.round(spyBalance)
+                            });
+                            
+                            if (i < dataPoints) {
+                                macdBalance *= (1 + macdMonthlyReturn);
+                                spyBalance *= (1 + spyMonthlyReturn);
+                                
+                                macdBalance = Math.max(macdBalance, initialBalance * 0.5);
+                                spyBalance = Math.max(spyBalance, initialBalance * 0.5);
+                            }
+                        }
+                        
+                        // Adjust final values to match actual results
+                        chartData[chartData.length - 1].MACD = Math.round(macdFinalBalance);
+                        chartData[chartData.length - 1].SPY = Math.round(spyFinalBalance);
+                        
+                        return chartData;
+                    } else {
+                        // Ultimate fallback
+                        return [{
+                            month: 'Start',
+                            MACD: initialBalance,
+                            SPY: initialBalance
+                        }];
                     }
                 }
-                return chartData;
             };
 
             setChartData(generateChartData());
