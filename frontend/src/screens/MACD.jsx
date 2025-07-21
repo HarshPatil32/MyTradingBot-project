@@ -4,6 +4,9 @@ import { TrendingUp, Calendar, DollarSign, Plus, X, Play, Moon, Sun, Info, Trash
 import axios from 'axios';
 
 const MACDTrading = () => {
+    // API URL from environment variables
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+    
     // State management
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
@@ -170,7 +173,7 @@ const MACDTrading = () => {
         try {
             // Call both MACD strategy and SPY investment in parallel
             const [macdResponse, spyResponse] = await Promise.all([
-                axios.get('http://localhost:5001/MACD-strategy', {
+                axios.get(`${API_URL}/MACD-strategy`, {
                     params: {
                         stocks: myStocks.join(','),
                         start_date: startDate,
@@ -179,7 +182,7 @@ const MACDTrading = () => {
                         optimize: 'true'
                     }
                 }),
-                axios.get('http://localhost:5001/spy-investment', {
+                axios.get(`${API_URL}/spy-investment`, {
                     params: {
                         start_date: startDate,
                         end_date: endDate,
