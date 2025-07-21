@@ -5,8 +5,18 @@ from flask import Flask, request, jsonify
 import requests
 from datetime import datetime, timedelta
 from alpaca.data.timeframe import TimeFrame
-import talib
+import pandas as pd
+import numpy as np
 import time
+
+# Try to import TA-Lib, fall back to pandas implementation if not available
+try:
+    import talib
+    TALIB_AVAILABLE = True
+    print("✅ TA-Lib imported successfully")
+except ImportError:
+    TALIB_AVAILABLE = False
+    print("⚠️ TA-Lib not available, using pandas implementation")
 
 load_dotenv()
 
@@ -21,7 +31,32 @@ url = "https://paper-api.alpaca.markets"
 api = tradeapi.REST(API_KEY_ID, API_SECRET_KEY, url)
 
 def calculate_indicators(data, fastperiod, slowperiod, signalperiod):
-    data['MACD'], data['Signal'], data['Hist'] = talib.MACD(data['close'], fastperiod=fastperiod, slowperiod=slowperiod, signalperiod=signalperiod)
+    """
+    Calculate MACD indicators using TA-Lib if available, otherwise use pandas
+    """
+    if TALIB_AVAILABLE:
+        # Use TA-Lib (preferred method)
+        data['MACD'], data['Signal'], data['Hist'] = talib.MACD(
+            data['close'], 
+            fastperiod=fastperiod, 
+            slowperiod=slowperiod, 
+            signalperiod=signalperiod
+        )
+    else:
+        # Use pandas implementation as fallback
+        # Calculate EMAs
+        ema_fast = data['close'].ewm(span=fastperiod).mean()
+        ema_slow = data['close'].ewm(span=slowperiod).mean()
+        
+        # Calculate MACD line
+        data['MACD'] = ema_fast - ema_slow
+        
+        # Calculate Signal line (EMA of MACD)
+        data['Signal'] = data['MACD'].ewm(span=signalperiod).mean()
+        
+        # Calculate Histogram
+        data['Hist'] = data['MACD'] - data['Signal']
+    
     return data
 
 def backtest_strategy_MACD(symbols, start_date, end_date, initial_balance=100000, trailing_stop_loss=0.15, fastperiod=12, slowperiod=26, signalperiod=9, return_monthly_data=False):
