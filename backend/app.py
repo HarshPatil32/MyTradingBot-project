@@ -12,7 +12,18 @@ from MACD_trading import backtest_strategy_MACD
 
 app = Flask(__name__)
 
-CORS(app)
+# Configure CORS to allow requests from your React frontend
+CORS(app, origins=["http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174"], 
+     allow_headers=["Content-Type"], 
+     methods=["GET", "POST", "OPTIONS"])
+
+# Additional CORS handling for any missed preflight requests
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')  # Allow all origins for development
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 
 
@@ -117,15 +128,16 @@ if __name__ == "__main__":
     monitor_thread.start()
     
     app.run()
-    '''
+    
 
     start_date = datetime(2019, 1, 1)  
     end_date = datetime(2024, 1, 1)
     symbols = ["SPY", "PG"]  
 
     print(backtest_strategy_MACD(symbols, start_date, end_date))
+    '''
 
-    # app.run()
+    app.run()
 
 
 
