@@ -4,12 +4,14 @@ import { TrendingUp, Calendar, DollarSign, Plus, X, Play, Moon, Sun, Info, Trash
 import axios from 'axios';
 
 const MACDTrading = () => {
-    // API URL from environment variables
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+    // API URL from environment variables with fallback
+    const API_URL = import.meta.env.VITE_API_URL || 'https://mytradingbot-project.onrender.com';
     
-    // Debug: Log API URL
-    console.log('API_URL:', API_URL);
-    console.log('Environment variables:', import.meta.env);
+    // Debug: Log API URL (only in development)
+    if (import.meta.env.DEV) {
+        console.log('API_URL:', API_URL);
+        console.log('Environment variables:', import.meta.env);
+    }
     
     // State management
     const [startDate, setStartDate] = useState('');
@@ -175,7 +177,7 @@ const MACDTrading = () => {
         setErrorMessage('');
 
         try {
-            // Call both MACD strategy and SPY investment in parallel
+            // Call both MACD strategy and SPY investment in parallel with timeout
             const [macdResponse, spyResponse] = await Promise.all([
                 axios.get(`${API_URL}/MACD-strategy`, {
                     params: {
@@ -184,14 +186,16 @@ const MACDTrading = () => {
                         end_date: endDate,
                         initial_balance: initialBalance,
                         optimize: 'true'
-                    }
+                    },
+                    timeout: 120000 // 2 minutes timeout for optimization
                 }),
                 axios.get(`${API_URL}/spy-investment`, {
                     params: {
                         start_date: startDate,
                         end_date: endDate,
                         initial_balance: initialBalance
-                    }
+                    },
+                    timeout: 30000 // 30 seconds timeout for SPY data
                 })
             ]);
 
@@ -302,11 +306,17 @@ const MACDTrading = () => {
         } catch (error) {
             console.error('Error fetching MACD data:', error);
             if (error.response) {
-                setErrorMessage(`Server error: ${error.response.data.error || 'Unknown error'}`);
+                const status = error.response.status;
+                const errorMsg = error.response.data?.error || 'Unknown server error';
+                if (status >= 500) {
+                    setErrorMessage(`Server error (${status}): ${errorMsg}. The backend may be starting up, please try again in a moment.`);
+                } else {
+                    setErrorMessage(`Request error (${status}): ${errorMsg}`);
+                }
             } else if (error.request) {
-                setErrorMessage('Unable to connect to server. Please ensure the backend is running.');
+                setErrorMessage(`Unable to connect to backend server at ${API_URL}. Please check if the backend is running and try again.`);
             } else {
-                setErrorMessage('Failed to fetch MACD data');
+                setErrorMessage(`Network error: ${error.message}`);
             }
         } finally {
             setIsLoading(false);
@@ -559,7 +569,10 @@ const MACDTrading = () => {
                                 {isLoading ? (
                                     <>
                                         <div className="animate-spin rounded-full h-6 w-6 border-2 border-white border-t-transparent"></div>
-                                        Running Optimization & Backtest...
+                                        <span className="flex flex-col items-center">
+                                            <span>Running Optimization & Backtest...</span>
+                                            <span className="text-xs opacity-80">This may take 1-2 minutes. Backend might be starting up.</span>
+                                        </span>
                                     </>
                                 ) : (
                                     <>
