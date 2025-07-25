@@ -4,19 +4,31 @@
 set -e  # Exit on any error
 
 echo "Starting build process..."
+echo "Python version: $(python --version)"
+echo "Pip version: $(pip --version)"
 
 # Upgrade pip and setuptools first
 echo "Upgrading pip, setuptools, and wheel..."
 pip install --upgrade pip setuptools wheel
 
-# Install core dependencies first (without TA-Lib)
-echo "Installing core dependencies..."
-pip install Flask==2.3.3 Flask-CORS==4.0.0 python-dotenv==1.0.0
-pip install yfinance requests gunicorn alpaca-trade-api
+# Install packages one by one to identify issues
+echo "Installing Flask and basic dependencies..."
+pip install Flask==2.3.3
+pip install Flask-CORS==4.0.0
+pip install python-dotenv==1.0.0
+pip install requests>=2.31.0
+pip install gunicorn>=21.2.0
 
-# Install scientific computing libraries
-echo "Installing numpy, pandas, scikit-learn..."
-pip install "numpy>=1.26.0" "pandas>=2.1.0" "scikit-learn>=1.3.0"
+echo "Installing financial libraries..."
+pip install yfinance>=0.2.28
+
+echo "Installing scientific computing libraries..."
+pip install "numpy>=1.26.0"
+pip install "pandas>=2.1.0"
+pip install "scikit-learn>=1.3.0"
+
+echo "Installing alpaca trading API..."
+pip install "alpaca-trade-api>=3.1.1"
 
 # Try to install TA-Lib using multiple approaches
 echo "Installing TA-Lib..."
@@ -39,5 +51,13 @@ else
     echo "❌ All TA-Lib installation methods failed"
     echo "ℹ️  The app will use pandas-based indicators instead"
 fi
+
+# Verify installations
+echo "Verifying key installations..."
+python -c "import flask; print(f'Flask: {flask.__version__}')"
+python -c "import numpy; print(f'NumPy: {numpy.__version__}')"
+python -c "import pandas; print(f'Pandas: {pandas.__version__}')"
+python -c "import sklearn; print(f'Scikit-learn: {sklearn.__version__}')"
+python -c "import alpaca_trade_api; print('Alpaca Trade API: OK')"
 
 echo "Build completed successfully!"
