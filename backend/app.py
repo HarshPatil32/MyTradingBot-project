@@ -4,9 +4,16 @@ from dotenv import load_dotenv
 import logging
 import os
 from datetime import datetime
-from test_against_SP import get_spy_investment, generate_spy_monthly_performance
-from MACD_trading import backtest_strategy_MACD, generate_monthly_performance
-from optimize_MACD import optimize_macd_parameters
+
+# Try to import trading modules with error handling
+try:
+    from test_against_SP import get_spy_investment, generate_spy_monthly_performance
+    from MACD_trading import backtest_strategy_MACD, generate_monthly_performance
+    from optimize_MACD import optimize_macd_parameters
+    TRADING_MODULES_AVAILABLE = True
+except ImportError as e:
+    logging.error(f"Trading modules not available: {e}")
+    TRADING_MODULES_AVAILABLE = False
 
 app = Flask(__name__)
 
@@ -51,6 +58,9 @@ def hook():
 
 @app.route('/MACD-strategy', methods=['GET'])
 def MACD_strategy():
+    if not TRADING_MODULES_AVAILABLE:
+        return jsonify({"error": "Trading modules not available. Please check server setup."}), 500
+    
     try:
         stocks = request.args.get('stocks')
         start_date_str = request.args.get('start_date')
@@ -130,6 +140,9 @@ def MACD_strategy():
 
 @app.route('/spy-investment', methods=['GET'])
 def spy_investment():
+    if not TRADING_MODULES_AVAILABLE:
+        return jsonify({"error": "Trading modules not available. Please check server setup."}), 500
+        
     try:
         start_date_str = request.args.get('start_date')
         end_date_str = request.args.get('end_date')
