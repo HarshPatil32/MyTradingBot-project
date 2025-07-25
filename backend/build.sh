@@ -1,11 +1,22 @@
 #!/bin/bash
 # Build script for Render
 
-# Upgrade pip and setuptools
+set -e  # Exit on any error
+
+echo "Starting build process..."
+
+# Upgrade pip and setuptools first
+echo "Upgrading pip, setuptools, and wheel..."
 pip install --upgrade pip setuptools wheel
 
-# Install all requirements except TA-Lib first
-pip install -r requirements.txt
+# Install core dependencies first (without TA-Lib)
+echo "Installing core dependencies..."
+pip install Flask==2.3.3 Flask-CORS==4.0.0 python-dotenv==1.0.0
+pip install yfinance requests gunicorn alpaca-trade-api
+
+# Install scientific computing libraries
+echo "Installing numpy, pandas, scikit-learn..."
+pip install "numpy>=1.26.0" "pandas>=2.1.0" "scikit-learn>=1.3.0"
 
 # Try to install TA-Lib using multiple approaches
 echo "Installing TA-Lib..."
@@ -26,7 +37,7 @@ elif pip install TA-Lib; then
     echo "✅ TA-Lib standard package installed successfully"
 else
     echo "❌ All TA-Lib installation methods failed"
-    echo "ℹ️  The app will need to use pandas-based indicators instead"
+    echo "ℹ️  The app will use pandas-based indicators instead"
 fi
 
-echo "Build completed!"
+echo "Build completed successfully!"
