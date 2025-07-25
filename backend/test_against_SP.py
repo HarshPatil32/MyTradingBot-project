@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 import alpaca_trade_api as tradeapi
 from flask import Flask, request, jsonify
-from alpaca.data.timeframe import TimeFrame
+from alpaca_trade_api import TimeFrame
 import os
 
 load_dotenv()
