@@ -43,6 +43,16 @@ def internal_error(error):
 def health_check():
     return jsonify({"status": "API is running", "message": "Flask trading API"}), 200
 
+@app.route("/heartbeat", methods=["GET"])
+def heartbeat():
+    """Lightweight heartbeat endpoint to keep server alive"""
+    return jsonify({
+        "status": "alive", 
+        "timestamp": datetime.now().isoformat(),
+        "message": "Server is running"
+    }), 200
+
+
 @app.route("/webhookcallback", methods=["POST"])
 def hook():
     try:
