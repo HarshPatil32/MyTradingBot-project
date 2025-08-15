@@ -12,7 +12,7 @@ class HeartbeatService {
   // Method to set or update the API URL
   setApiUrl(apiUrl) {
     this.apiUrl = apiUrl;
-    console.log(`🔗 Heartbeat service API URL set to: ${apiUrl}`);
+    console.log(`Heartbeat service API URL set to: ${apiUrl}`);
   }
 
   async sendHeartbeat() {

@@ -77,7 +77,7 @@ const MACDTrading = () => {
                 }
                 break;
             case 'stocks':
-                if (myStocks.length === 0) {
+                if (value.length === 0) {
                     errors.stocks = 'Please add at least one stock';
                 } else {
                     delete errors.stocks;
