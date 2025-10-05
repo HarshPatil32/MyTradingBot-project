@@ -34,6 +34,12 @@ const MACDTrading = () => {
         signalPeriod: 9
     });
 
+    // Auto-selection state
+    const [timeframe, setTimeframe] = useState('medium');
+    const [strategyMode, setStrategyMode] = useState('moderate');
+    const [isAutoSelecting, setIsAutoSelecting] = useState(false);
+    const [selectedStocksData, setSelectedStocksData] = useState([]);
+
     // Mock chart data for demonstration
     const [chartData, setChartData] = useState([]);
 
@@ -130,6 +136,12 @@ const MACDTrading = () => {
             setMyStocks([...myStocks, trimmed]);
             setStockInput('');
             setErrorMessage('');
+            
+            // Clear auto-selected data when manual stock is added
+            if (selectedStocksData.length > 0) {
+                setSelectedStocksData([]);
+            }
+            
             validateField('stocks', [...myStocks, trimmed]);
             showSuccessMessage(`${trimmed} added successfully!`);
         } else if (myStocks.includes(trimmed)) {
@@ -141,6 +153,11 @@ const MACDTrading = () => {
         const stockToDelete = myStocks[index];
         const updatedStocks = myStocks.filter((_, i) => i !== index);
         setMyStocks(updatedStocks);
+        
+        // Also remove from selected stocks data if it was auto-selected
+        const updatedStocksData = selectedStocksData.filter(s => s.symbol !== stockToDelete);
+        setSelectedStocksData(updatedStocksData);
+        
         validateField('stocks', updatedStocks);
         showSuccessMessage(`${stockToDelete} removed`);
     };
@@ -320,6 +337,59 @@ const MACDTrading = () => {
             }
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    // Auto-selection functionality
+    const autoSelectStocks = async () => {
+        setIsAutoSelecting(true);
+        setErrorMessage('');
+        
+        try {
+            console.log(`Auto-selecting stocks for ${timeframe} timeframe...`);
+            
+            const response = await axios.get(`${API_URL}/get-optimal-stocks`, {
+                params: {
+                    timeframe: timeframe,
+                    max_stocks: 8,
+                    strategy_mode: strategyMode
+                },
+                timeout: 60000 // 1 minute timeout
+            });
+
+            if (response.data.error && response.data.fallback_stocks) {
+                // Use fallback stocks if screening failed
+                setMyStocks(response.data.fallback_stocks.slice(0, 6));
+                setSelectedStocksData([]);
+                showSuccessMessage(`Using fallback stocks due to screening limitations`);
+            } else if (response.data.selected_stocks) {
+                // Use auto-selected stocks
+                const stocks = response.data.selected_stocks;
+                const stockSymbols = stocks.map(stock => stock.symbol);
+                
+                setMyStocks(stockSymbols);
+                setSelectedStocksData(stocks);
+                validateField('stocks', stockSymbols);
+                
+                showSuccessMessage(`Auto-selected ${stocks.length} optimal stocks for ${timeframe}-term MACD strategy!`);
+                console.log('Selected stocks:', stocks);
+            } else {
+                setErrorMessage('No stocks could be selected. Please try manual selection.');
+            }
+            
+        } catch (error) {
+            console.error('Auto-selection error:', error);
+            if (error.response) {
+                const status = error.response.status;
+                const errorMsg = error.response.data?.error || 'Unknown server error';
+                setErrorMessage(`Auto-selection failed (${status}): ${errorMsg}`);
+            } else if (error.request) {
+                setErrorMessage(`Unable to connect to backend server for stock selection. Please try manual selection.`);
+            } else {
+                setErrorMessage(`Auto-selection error: ${error.message}`);
+            }
+        } finally {
+            setIsAutoSelecting(false);
         }
     };
 
@@ -508,49 +578,159 @@ const MACDTrading = () => {
                         } shadow-lg`}>
                             <h2 className="text-xl font-semibold mb-4">Stock Selection</h2>
                             
-                            <div className="flex gap-2 mb-4">
-                                <input
-                                    type="text"
-                                    value={stockInput}
-                                    onChange={handleStockInputChange}
-                                    placeholder="Enter stock symbol (e.g., AAPL)"
-                                    className={`flex-1 p-3 border rounded-lg transition-colors ${
-                                        darkMode 
-                                            ? 'bg-gray-700 border-gray-600 focus:border-blue-500' 
-                                            : 'bg-white border-gray-300 focus:border-blue-500'
-                                    }`}
-                                    onKeyPress={(e) => e.key === 'Enter' && addStock()}
-                                />
+                            {/* Auto-Selection Controls */}
+                            <div className={`p-4 rounded-lg mb-4 ${
+                                darkMode ? 'bg-gray-700' : 'bg-blue-50'
+                            }`}>
+                                <h3 className="font-semibold text-blue-600 mb-3">🎯 Auto-Select Optimal Stocks</h3>
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2">Trading Timeframe</label>
+                                        <select
+                                            value={timeframe}
+                                            onChange={(e) => setTimeframe(e.target.value)}
+                                            className={`w-full p-2 border rounded-lg ${
+                                                darkMode 
+                                                    ? 'bg-gray-600 border-gray-500 text-white' 
+                                                    : 'bg-white border-gray-300'
+                                            }`}
+                                        >
+                                            <option value="short">Short-term (1-3 months)</option>
+                                            <option value="medium">Medium-term (3-12 months)</option>
+                                            <option value="long">Long-term (1+ years)</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2">Strategy Mode</label>
+                                        <select
+                                            value={strategyMode}
+                                            onChange={(e) => setStrategyMode(e.target.value)}
+                                            className={`w-full p-2 border rounded-lg ${
+                                                darkMode 
+                                                    ? 'bg-gray-600 border-gray-500 text-white' 
+                                                    : 'bg-white border-gray-300'
+                                            }`}
+                                        >
+                                            <option value="conservative">Conservative</option>
+                                            <option value="moderate">Moderate</option>
+                                            <option value="aggressive">Aggressive</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                
                                 <button
-                                    onClick={addStock}
-                                    disabled={!stockInput.trim() || myStocks.includes(stockInput.trim().toUpperCase())}
-                                    className={`px-4 py-3 rounded-lg font-semibold transition-all flex items-center gap-2 ${
-                                        !stockInput.trim() || myStocks.includes(stockInput.trim().toUpperCase())
+                                    onClick={autoSelectStocks}
+                                    disabled={isAutoSelecting}
+                                    className={`w-full p-3 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 ${
+                                        isAutoSelecting
                                             ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                                            : 'bg-blue-500 text-white hover:bg-blue-600 transform hover:scale-105'
+                                            : 'bg-gradient-to-r from-green-500 to-blue-500 text-white hover:from-green-600 hover:to-blue-600 transform hover:scale-105'
                                     }`}
                                 >
-                                    <Plus size={20} />
-                                    Add
+                                    {isAutoSelecting ? (
+                                        <>
+                                            <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                                            <span>Analyzing stocks...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <TrendingUp size={20} />
+                                            <span>Auto-Select Optimal Stocks</span>
+                                        </>
+                                    )}
                                 </button>
                             </div>
 
-                            {/* Stock Chips */}
-                            <div className="flex flex-wrap gap-2 mb-4">
-                                {myStocks.map((stock, idx) => (
-                                    <span
-                                        key={idx}
-                                        className="inline-flex items-center gap-2 px-3 py-2 bg-blue-100 text-blue-800 rounded-full text-sm font-medium transition-all hover:bg-blue-200"
+                            {/* Manual Stock Input */}
+                            <div className="border-t pt-4">
+                                <h3 className="font-medium mb-3">Or Add Stocks Manually</h3>
+                                <div className="flex gap-2 mb-4">
+                                    <input
+                                        type="text"
+                                        value={stockInput}
+                                        onChange={handleStockInputChange}
+                                        placeholder="Enter stock symbol (e.g., AAPL)"
+                                        className={`flex-1 p-3 border rounded-lg transition-colors ${
+                                            darkMode 
+                                                ? 'bg-gray-700 border-gray-600 focus:border-blue-500' 
+                                                : 'bg-white border-gray-300 focus:border-blue-500'
+                                        }`}
+                                        onKeyPress={(e) => e.key === 'Enter' && addStock()}
+                                    />
+                                    <button
+                                        onClick={addStock}
+                                        disabled={!stockInput.trim() || myStocks.includes(stockInput.trim().toUpperCase())}
+                                        className={`px-4 py-3 rounded-lg font-semibold transition-all flex items-center gap-2 ${
+                                            !stockInput.trim() || myStocks.includes(stockInput.trim().toUpperCase())
+                                                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                                : 'bg-blue-500 text-white hover:bg-blue-600 transform hover:scale-105'
+                                        }`}
                                     >
-                                        {stock}
-                                        <button
-                                            onClick={() => deleteStock(idx)}
-                                            className="hover:bg-blue-300 rounded-full p-1 transition-colors"
-                                        >
-                                            <X size={14} />
-                                        </button>
-                                    </span>
-                                ))}
+                                        <Plus size={20} />
+                                        Add
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Selected Stocks Display */}
+                            <div className="mb-4">
+                                {myStocks.length > 0 && (
+                                    <div className="mb-2">
+                                        <h3 className="font-medium text-sm mb-2">
+                                            Selected Stocks ({myStocks.length})
+                                            {selectedStocksData.length > 0 && <span className="text-green-600 ml-1">✨ Auto-selected</span>}
+                                        </h3>
+                                    </div>
+                                )}
+                                
+                                <div className="flex flex-wrap gap-2">
+                                    {myStocks.map((stock, idx) => {
+                                        const stockData = selectedStocksData.find(s => s.symbol === stock);
+                                        return (
+                                            <div
+                                                key={idx}
+                                                className={`inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium transition-all hover:bg-blue-200 ${
+                                                    stockData 
+                                                        ? 'bg-green-100 text-green-800 border border-green-200' 
+                                                        : 'bg-blue-100 text-blue-800'
+                                                }`}
+                                                title={stockData ? `Score: ${stockData.score?.toFixed(1)} - ${stockData.reason}` : stock}
+                                            >
+                                                <span className="font-semibold">{stock}</span>
+                                                {stockData && (
+                                                    <span className="text-xs bg-green-200 text-green-700 px-1 rounded">
+                                                        {stockData.score?.toFixed(0)}
+                                                    </span>
+                                                )}
+                                                <button
+                                                    onClick={() => deleteStock(idx)}
+                                                    className="hover:bg-red-200 rounded-full p-1 transition-colors"
+                                                >
+                                                    <X size={14} />
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                
+                                {/* Show reasoning for auto-selected stocks */}
+                                {selectedStocksData.length > 0 && (
+                                    <div className={`mt-3 p-3 rounded-lg text-sm ${
+                                        darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-50 text-gray-600'
+                                    }`}>
+                                        <div className="font-medium mb-2">💡 Selection Reasoning:</div>
+                                        <div className="space-y-1">
+                                            {selectedStocksData.map((stock, idx) => (
+                                                <div key={idx} className="flex justify-between">
+                                                    <span className="font-medium">{stock.symbol}:</span>
+                                                    <span className="text-right flex-1 ml-2">{stock.reason}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             {fieldErrors.stocks && (
