@@ -45,7 +45,7 @@ class StockScreener:
                     stocks.append(asset.symbol)
             
             logger.info(f"Found {len(stocks)} tradeable stocks")
-            return stocks[:500]  # Limit for testing, can expand later
+            return stocks[:250]  # Reduced universe for better performance and focus
             
         except Exception as e:
             logger.error(f"Error getting stock universe: {e}")
@@ -249,9 +249,9 @@ class StockScreener:
             if score > 50:  # Minimum threshold
                 candidates.append({
                     'symbol': symbol,
-                    'score': score,
-                    'price': data['close'].iloc[-1],
-                    'volume': data['volume'].iloc[-1],
+                    'score': float(score),
+                    'price': float(data['close'].iloc[-1]),
+                    'volume': int(data['volume'].iloc[-1]),
                     'data_points': len(data)
                 })
         
