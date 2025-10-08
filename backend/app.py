@@ -4,6 +4,9 @@ from dotenv import load_dotenv
 import logging
 import os
 from datetime import datetime
+import requests
+import json
+import numpy as np
 
 # Try to import trading modules with error handling
 try:
@@ -181,6 +184,116 @@ def spy_investment():
     except Exception as e:
         logger.error(f"SPY investment error: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+def generate_selection_reason(score):
+    """Give a reason for why it chose the stock"""
+    if score >= 85:
+        return "Excellent MACD signals with strong momentum"
+    elif score >= 75:
+        return "Strong MACD patterns and good volume"
+    elif score >= 65:
+        return "Good technical setup for MACD strategy"
+    elif score >= 55:
+        return "Decent MACD potential with acceptable risk"
+    else:
+        return "Basic MACD suitability"
+
+
+@app.route('/get-optimal-stocks', methods=['GET'])
+def get_optimal_stocks():
+    """This route will select the most optimal stocks for you"""
+    if not TRADING_MODULES_AVAILABLE:
+        return jsonify({"error": "Trading modules not available. Please check server setup"}), 500
+    
+    try:
+        from stock_screener import StockScreener
+
+        # Get the parameters we need
+        timeframe = request.args.get('timeframe', default = 'medium')
+        max_stocks = request.args.get('max_stocks', default=5, type=int)
+        strategy_mode = request.args.get('strategy_mode', default = 'moderate')
+
+        # Check the timeframe
+        valid_timeframes = ['short', 'medium', 'long']
+        if timeframe not in valid_timeframes:
+            return jsonify({"error": "The timeframe isn't valid, please choose short, medium or long"}), 400
+        
+        # Cap the max stocks at 10
+        if max_stocks < 1 or max_stocks > 10:
+            return jsonify({"error": "Please choose a number between 1 and 10 inclusive"})
+        
+        screener = StockScreener()
+        selected_stocks = screener.screen_stocks_for_macd(timeframe=timeframe, max_stocks=max_stocks)
+
+        if not selected_stocks:
+            return jsonify({"error": "No suitable stocks found with your criteria",
+                            "fallback_stocks": ["AAPL", "MSFT", "GOOGL", "TSLA"]}), 200
+        
+        # DEBUG: Test 1 - Can we serialize the raw selected_stocks?
+        print("DEBUG: Testing raw selected_stocks serialization...")
+        try:
+            import json
+            json.dumps(selected_stocks)
+            print("DEBUG: Raw selected_stocks - OK")
+        except Exception as e:
+            print(f"DEBUG: Raw selected_stocks FAILED: {e}")
+        
+        # stock reasoning
+        for stock in selected_stocks:
+            stock['reason'] = generate_selection_reason(stock['score'])
+            
+        # DEBUG: Test 2 - Can we serialize after adding reasons?
+        print("DEBUG: Testing selected_stocks with reasons...")
+        try:
+            json.dumps(selected_stocks)
+            print("DEBUG: Selected_stocks with reasons - OK")
+        except Exception as e:
+            print(f"DEBUG: Selected_stocks with reasons FAILED: {e}")
+
+        response_data = {
+            "selected_stocks": selected_stocks,
+            "timeframe": timeframe,
+            "strategy_mode": strategy_mode,
+            "total_candidates_screened": int(len(selected_stocks) * 10),  # Rough estimate
+            "selection_criteria": f"MACD-optimized for {timeframe}-term trading",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # DEBUG: Test 3 - Can we serialize the full response_data?
+        print("DEBUG: Testing full response_data...")
+        try:
+            json.dumps(response_data)
+            print("DEBUG: Full response_data - OK")
+        except Exception as e:
+            print(f"DEBUG: Full response_data FAILED: {e}")
+            
+        # DEBUG: Test 4 - Let's check individual fields
+        print("DEBUG: Checking individual response fields...")
+        for key, value in response_data.items():
+            try:
+                json.dumps({key: value})
+                print(f"DEBUG: {key} - OK")
+            except Exception as e:
+                print(f"DEBUG: {key} FAILED: {e}")
+                print(f"DEBUG: {key} type: {type(value)}")
+                if key == "selected_stocks" and isinstance(value, list):
+                    for i, stock in enumerate(value):
+                        try:
+                            json.dumps(stock)
+                            print(f"DEBUG: stock[{i}] ({stock.get('symbol', 'unknown')}) - OK")
+                        except Exception as stock_e:
+                            print(f"DEBUG: stock[{i}] ({stock.get('symbol', 'unknown')}) FAILED: {stock_e}")
+                            for stock_key, stock_value in stock.items():
+                                print(f"DEBUG:   {stock_key}: {type(stock_value)} = {stock_value}")
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Stock screening error: {str(e)}")
+        return jsonify({
+            "error": f"Stock screening failed: {str(e)}",
+            "fallback_stocks": ["AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "META", "NVDA", "SPY"]
+        }), 500
 
 # Load environment variables
 load_dotenv()
