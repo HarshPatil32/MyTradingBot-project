@@ -137,7 +137,7 @@ class StockScreener:
             # Market cap estimation (rough)
             # We'll use price * average volume as a proxy for liquidity
             liquidity_proxy = latest['close'] * avg_volume
-            if liquidity_proxy < 10000000:  # $10M daily turnover minimum
+            if liquidity_proxy < 10000000:  
                 return False, "Insufficient liquidity"
             
             return True, "Passed base filters"
