@@ -226,8 +226,7 @@ def get_optimal_stocks():
         selected_stocks = screener.screen_stocks_for_macd(timeframe=timeframe, max_stocks=max_stocks)
 
         if not selected_stocks:
-            return jsonify({"error": "No suitable stocks found with your criteria",
-                            "fallback_stocks": ["AAPL", "MSFT", "GOOGL", "TSLA"]}), 200
+            return jsonify({"error": "No suitable stocks found with your criteria. Please try different timeframe or strategy mode settings."}), 400
         
         # Add stock reasoning
         for stock in selected_stocks:
@@ -247,8 +246,7 @@ def get_optimal_stocks():
     except Exception as e:
         logger.error(f"Stock screening error: {str(e)}")
         return jsonify({
-            "error": f"Stock screening failed: {str(e)}",
-            "fallback_stocks": ["AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "META", "NVDA", "SPY"]
+            "error": f"Stock screening failed: {str(e)}. Please check system status and try again."
         }), 500
 
 @app.route('/auto-trade', methods=['GET'])
@@ -292,10 +290,8 @@ def auto_trade():
 
         if not selected_stocks:
             return jsonify({
-                "error": "No suitable stocks found for auto-trading",
-                "fallback_suggestion": "Try different timeframe or strategy_mode",
-                "fallback_stocks": ["AAPL", "MSFT", "GOOGL", "TSLA"]
-            }), 200
+                "error": "No suitable stocks found for auto-trading. Please try different timeframe or strategy_mode settings."
+            }), 400
 
         # Add reasoning to selected stocks (for me)
         for stock in selected_stocks:
