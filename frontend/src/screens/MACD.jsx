@@ -393,6 +393,139 @@ const MACDTrading = () => {
         }
     };
 
+    const runAutoTrade = async () => {
+        if (!isFormValid()) {
+            setErrorMessage('Please ensure all fields are valid before running auto-trade.');
+            return;
+        }
+
+        setIsLoading(true);
+        setErrorMessage('');
+
+        try {
+            console.log(`Running auto-trade for ${timeframe} timeframe with ${strategyMode} strategy...`);
+            
+            const response = await axios.get(`${API_URL}/auto-trade`, {
+                params: {
+                    timeframe: timeframe,
+                    strategy_mode: strategyMode,
+                    max_stocks: 5,
+                    start_date: startDate,
+                    end_date: endDate,
+                    initial_balance: initialBalance
+                },
+                timeout: 180000 
+            });
+
+            if (response.data.error) {
+                setErrorMessage(response.data.error);
+                return;
+            }
+
+            const autoSelection = response.data.auto_selection;
+            if (autoSelection && autoSelection.selected_stocks) {
+                const stocks = autoSelection.selected_stocks;
+                const stockSymbols = stocks.map(stock => stock.symbol);
+                
+                setMyStocks(stockSymbols);
+                setSelectedStocksData(stocks);
+                validateField('stocks', stockSymbols);
+            }
+
+            // Process trading results
+            const tradingResults = response.data.trading_results;
+            if (tradingResults) {
+                setBacktestResult(tradingResults.backtest_result);
+                
+
+                if (tradingResults.optimized_parameters) {
+                    setOptimizedParams(tradingResults.optimized_parameters);
+                    setMacdParams({
+                        fastPeriod: tradingResults.optimized_parameters.fastperiod,
+                        slowPeriod: tradingResults.optimized_parameters.slowperiod,
+                        signalPeriod: tradingResults.optimized_parameters.signalperiod
+                    });
+                    
+                    // Set optimization performance
+                    setOptimizationPerformance({
+                        best_balance: tradingResults.final_balance,
+                        total_return: tradingResults.total_return_percent
+                    });
+                }
+
+                // Generate chart data from monthly performance
+                if (tradingResults.monthly_performance) {
+                    // Also get SPY data for comparison
+                    try {
+                        const spyResponse = await axios.get(`${API_URL}/spy-investment`, {
+                            params: {
+                                start_date: startDate,
+                                end_date: endDate,
+                                initial_balance: initialBalance
+                            },
+                            timeout: 30000
+                        });
+
+                        if (spyResponse.data.final_balance) {
+                            setSpyFinalBalance(spyResponse.data.final_balance);
+                            
+                            // Combine both datasets for chart
+                            const macdMonthlyData = tradingResults.monthly_performance;
+                            const spyMonthlyData = spyResponse.data.monthly_performance;
+                            
+                            if (macdMonthlyData && spyMonthlyData) {
+                                const maxLength = Math.max(macdMonthlyData.length, spyMonthlyData.length);
+                                const combinedChartData = [];
+                                
+                                for (let i = 0; i < maxLength; i++) {
+                                    const macdPoint = macdMonthlyData[i] || macdMonthlyData[macdMonthlyData.length - 1];
+                                    const spyPoint = spyMonthlyData[i] || spyMonthlyData[spyMonthlyData.length - 1];
+                                    
+                                    combinedChartData.push({
+                                        month: macdPoint.month,
+                                        MACD: Math.round(macdPoint.balance),
+                                        SPY: Math.round(spyPoint.balance)
+                                    });
+                                }
+                                
+                                setChartData(combinedChartData);
+                            }
+                        }
+                    } catch (spyError) {
+                        console.warn('Could not fetch SPY data for comparison:', spyError);
+
+                        const macdChartData = tradingResults.monthly_performance.map(point => ({
+                            month: point.month,
+                            MACD: Math.round(point.balance),
+                            SPY: initialBalance // Fallback flat line
+                        }));
+                        setChartData(macdChartData);
+                    }
+                }
+            }
+
+            showSuccessMessage(`Auto-trading complete! Selected ${autoSelection.selected_stocks.length} stocks and executed strategy with ${tradingResults.total_return_percent.toFixed(2)}% return!`);
+            
+        } catch (error) {
+            console.error('Auto-trading error:', error);
+            if (error.response) {
+                const status = error.response.status;
+                const errorMsg = error.response.data?.error || 'Unknown server error';
+                if (status >= 500) {
+                    setErrorMessage(`Server error (${status}): ${errorMsg}. The backend may be starting up, please try again in a moment.`);
+                } else {
+                    setErrorMessage(`Auto-trading error (${status}): ${errorMsg}`);
+                }
+            } else if (error.request) {
+                setErrorMessage(`Unable to connect to backend server for auto-trading. Please check if the backend is running.`);
+            } else {
+                setErrorMessage(`Auto-trading error: ${error.message}`);
+            }
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     return (
         <div className={`min-h-screen transition-colors duration-300 ${
             darkMode ? 'bg-gray-900 text-white' : 'bg-gray-50 text-gray-900'
@@ -620,27 +753,60 @@ const MACDTrading = () => {
                                     </div>
                                 </div>
                                 
-                                <button
-                                    onClick={autoSelectStocks}
-                                    disabled={isAutoSelecting}
-                                    className={`w-full p-3 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 ${
-                                        isAutoSelecting
-                                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                                            : 'bg-gradient-to-r from-green-500 to-blue-500 text-white hover:from-green-600 hover:to-blue-600 transform hover:scale-105'
-                                    }`}
-                                >
-                                    {isAutoSelecting ? (
-                                        <>
-                                            <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
-                                            <span>Analyzing stocks...</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <TrendingUp size={20} />
-                                            <span>Auto-Select Optimal Stocks</span>
-                                        </>
-                                    )}
-                                </button>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <button
+                                        onClick={autoSelectStocks}
+                                        disabled={isAutoSelecting}
+                                        className={`p-3 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 ${
+                                            isAutoSelecting
+                                                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                                : 'bg-gradient-to-r from-green-500 to-blue-500 text-white hover:from-green-600 hover:to-blue-600 transform hover:scale-105'
+                                        }`}
+                                    >
+                                        {isAutoSelecting ? (
+                                            <>
+                                                <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                                                <span>Selecting...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <TrendingUp size={20} />
+                                                <span>Select Stocks</span>
+                                            </>
+                                        )}
+                                    </button>
+                                    
+                                    <button
+                                        onClick={runAutoTrade}
+                                        disabled={!isFormValid() || isLoading}
+                                        className={`p-3 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 ${
+                                            !isFormValid() || isLoading
+                                                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                                : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600 transform hover:scale-105'
+                                        }`}
+                                    >
+                                        {isLoading ? (
+                                            <>
+                                                <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                                                <span>Auto-Trading...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Play size={20} />
+                                                <span>Auto-Trade</span>
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+                                
+                                <div className="text-xs text-center mt-2 space-y-1">
+                                    <div className={darkMode ? 'text-gray-400' : 'text-gray-600'}>
+                                        <strong>Select Stocks:</strong> Only find optimal stocks for manual backtesting
+                                    </div>
+                                    <div className={darkMode ? 'text-gray-400' : 'text-gray-600'}>
+                                        <strong>Auto-Trade:</strong> Complete workflow - select stocks + execute strategy + compare with SPY
+                                    </div>
+                                </div>
                             </div>
 
                             {/* Manual Stock Input */}
@@ -743,23 +909,51 @@ const MACDTrading = () => {
                                 className={`w-full p-4 rounded-lg font-semibold text-lg transition-all flex items-center justify-center gap-3 ${
                                     !isBacktestValid() || isLoading
                                         ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                                        : 'bg-gradient-to-r from-purple-500 to-blue-600 text-white hover:from-purple-600 hover:to-blue-700 transform hover:scale-105'
+                                        : 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:from-blue-600 hover:to-indigo-700 transform hover:scale-105'
                                 }`}
                             >
                                 {isLoading ? (
                                     <>
                                         <div className="animate-spin rounded-full h-6 w-6 border-2 border-white border-t-transparent"></div>
                                         <span className="flex flex-col items-center">
-                                            <span>Running Optimization & Backtest...</span>
+                                            <span>Running Manual Backtest...</span>
                                             <span className="text-xs opacity-80">This may take 1-2 minutes. Backend might be starting up.</span>
+                                        </span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Settings size={24} />
+                                        <span className="flex flex-col items-center">
+                                            <span>Run Manual Backtest</span>
+                                            <span className="text-xs opacity-80">Uses your selected stocks with optimization</span>
+                                        </span>
+                                    </>
+                                )}
+                            </button>
+
+                            <button
+                                onClick={runAutoTrade}
+                                disabled={!isFormValid() || isLoading}
+                                className={`w-full p-4 rounded-lg font-semibold text-lg transition-all flex items-center justify-center gap-3 mt-4 ${
+                                    !isFormValid() || isLoading
+                                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                        : 'bg-gradient-to-r from-green-500 to-blue-600 text-white hover:from-green-600 hover:to-blue-700 transform hover:scale-105'
+                                }`}
+                            >
+                                {isLoading ? (
+                                    <>
+                                        <div className="animate-spin rounded-full h-6 w-6 border-2 border-white border-t-transparent"></div>
+                                        <span className="flex flex-col items-center">
+                                            <span>Running Auto-Trade...</span>
+                                            <span className="text-xs opacity-80">This may take a few minutes. Backend might be starting up.</span>
                                         </span>
                                     </>
                                 ) : (
                                     <>
                                         <Play size={24} />
                                         <span className="flex flex-col items-center">
-                                            <span>Run MACD Backtest</span>
-                                            <span className="text-xs opacity-80">Auto-optimizes parameters & compares with SPY</span>
+                                            <span>Run Auto-Trade</span>
+                                            <span className="text-xs opacity-80">Auto-selects stocks & executes strategy</span>
                                         </span>
                                     </>
                                 )}
