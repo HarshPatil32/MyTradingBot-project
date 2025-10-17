@@ -229,26 +229,9 @@ def get_optimal_stocks():
             return jsonify({"error": "No suitable stocks found with your criteria",
                             "fallback_stocks": ["AAPL", "MSFT", "GOOGL", "TSLA"]}), 200
         
-        # DEBUG: Test 1 - Can we serialize the raw selected_stocks?
-        print("DEBUG: Testing raw selected_stocks serialization...")
-        try:
-            import json
-            json.dumps(selected_stocks)
-            print("DEBUG: Raw selected_stocks - OK")
-        except Exception as e:
-            print(f"DEBUG: Raw selected_stocks FAILED: {e}")
-        
-        # stock reasoning
+        # Add stock reasoning
         for stock in selected_stocks:
             stock['reason'] = generate_selection_reason(stock['score'])
-            
-        # DEBUG: Test 2 - Can we serialize after adding reasons?
-        print("DEBUG: Testing selected_stocks with reasons...")
-        try:
-            json.dumps(selected_stocks)
-            print("DEBUG: Selected_stocks with reasons - OK")
-        except Exception as e:
-            print(f"DEBUG: Selected_stocks with reasons FAILED: {e}")
 
         response_data = {
             "selected_stocks": selected_stocks,
@@ -259,33 +242,6 @@ def get_optimal_stocks():
             "timestamp": datetime.now().isoformat()
         }
         
-        # DEBUG: Test 3 - Can we serialize the full response_data?
-        print("DEBUG: Testing full response_data...")
-        try:
-            json.dumps(response_data)
-            print("DEBUG: Full response_data - OK")
-        except Exception as e:
-            print(f"DEBUG: Full response_data FAILED: {e}")
-            
-        # DEBUG: Test 4 - Let's check individual fields
-        print("DEBUG: Checking individual response fields...")
-        for key, value in response_data.items():
-            try:
-                json.dumps({key: value})
-                print(f"DEBUG: {key} - OK")
-            except Exception as e:
-                print(f"DEBUG: {key} FAILED: {e}")
-                print(f"DEBUG: {key} type: {type(value)}")
-                if key == "selected_stocks" and isinstance(value, list):
-                    for i, stock in enumerate(value):
-                        try:
-                            json.dumps(stock)
-                            print(f"DEBUG: stock[{i}] ({stock.get('symbol', 'unknown')}) - OK")
-                        except Exception as stock_e:
-                            print(f"DEBUG: stock[{i}] ({stock.get('symbol', 'unknown')}) FAILED: {stock_e}")
-                            for stock_key, stock_value in stock.items():
-                                print(f"DEBUG:   {stock_key}: {type(stock_value)} = {stock_value}")
-        
         return jsonify(response_data), 200
         
     except Exception as e:
@@ -293,6 +249,131 @@ def get_optimal_stocks():
         return jsonify({
             "error": f"Stock screening failed: {str(e)}",
             "fallback_stocks": ["AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "META", "NVDA", "SPY"]
+        }), 500
+
+@app.route('/auto-trade', methods=['GET'])
+def auto_trade():
+    if not TRADING_MODULES_AVAILABLE:
+        return jsonify({"error": "Trading modules not available. Please check server setup"}), 500
+    
+    try:
+        from stock_screener import StockScreener
+
+        # Get parameters
+        timeframe = request.args.get('timeframe', default='medium')
+        strategy_mode = request.args.get('strategy_mode', default='moderate')
+        max_stocks = request.args.get('max_stocks', default=5, type=int)
+        start_date_str = request.args.get('start_date')
+        end_date_str = request.args.get('end_date')  
+        initial_balance = request.args.get('initial_balance', default=100000, type=int)
+        
+        # Validate parameters
+        valid_timeframes = ['short', 'medium', 'long']
+        if timeframe not in valid_timeframes:
+            return jsonify({"error": "Invalid timeframe. Choose: short, medium, long"}), 400
+            
+        if max_stocks < 1 or max_stocks > 10:
+            return jsonify({"error": "max_stocks must be between 1 and 10"}), 400
+            
+        if not start_date_str or not end_date_str:
+            return jsonify({"error": "Missing required parameters: start_date, end_date"}), 400
+
+        try:
+            start_date_dt = datetime.strptime(start_date_str, '%Y-%m-%d')
+            end_date_dt = datetime.strptime(end_date_str, '%Y-%m-%d')
+        except ValueError as e:
+            return jsonify({"error": f"Invalid date format. Use YYYY-MM-DD: {str(e)}"}), 400
+
+        logger.info(f"Auto-trading: timeframe={timeframe}, strategy_mode={strategy_mode}, dates={start_date_str} to {end_date_str}")
+
+        # Select optimal stocks
+        screener = StockScreener()
+        selected_stocks = screener.screen_stocks_for_macd(timeframe=timeframe, max_stocks=max_stocks)
+
+        if not selected_stocks:
+            return jsonify({
+                "error": "No suitable stocks found for auto-trading",
+                "fallback_suggestion": "Try different timeframe or strategy_mode",
+                "fallback_stocks": ["AAPL", "MSFT", "GOOGL", "TSLA"]
+            }), 200
+
+        # Add reasoning to selected stocks (for me)
+        for stock in selected_stocks:
+            stock['reason'] = generate_selection_reason(stock['score'])
+
+        # Get the stock symbols for trading
+        stock_symbols = [stock['symbol'] for stock in selected_stocks]
+        
+        # Use the MACD strategy with Bayesian optimization
+        optimization_result = optimize_macd_parameters(
+            symbols=stock_symbols,
+            start_date=start_date_dt,
+            end_date=end_date_dt,
+            initial_balance=initial_balance,
+            n_iterations=15  # Balanced performance vs speed (open to change)
+        )
+        
+        optimized_params = optimization_result['optimized_params']
+        
+        # Run backtest with optimized parameters
+        str_result, final_balance = backtest_strategy_MACD(
+            stock_symbols, 
+            start_date_dt, 
+            end_date_dt, 
+            initial_balance,
+            fastperiod=optimized_params['fastperiod'],
+            slowperiod=optimized_params['slowperiod'],
+            signalperiod=optimized_params['signalperiod']
+        )
+        
+        # Generate monthly performance data
+        monthly_data = generate_monthly_performance(
+            stock_symbols,
+            start_date_dt,
+            end_date_dt,
+            initial_balance,
+            fastperiod=optimized_params['fastperiod'],
+            slowperiod=optimized_params['slowperiod'],
+            signalperiod=optimized_params['signalperiod']
+        )
+
+        # Calculate performance metrics
+        total_return = ((final_balance - initial_balance) / initial_balance) * 100
+        
+        # Return comprehensive results
+        response_data = {
+            "auto_selection": {
+                "selected_stocks": selected_stocks,
+                "selection_criteria": f"MACD-optimized for {timeframe}-term trading",
+                "timeframe": timeframe,
+                "strategy_mode": strategy_mode,
+                "total_candidates_screened": len(selected_stocks) * 10  # Rough estimate
+            },
+            "trading_results": {
+                "backtest_result": str_result.replace("\n", "<br />"),
+                "initial_balance": initial_balance,
+                "final_balance": final_balance,
+                "total_return_percent": round(total_return, 2),
+                "optimized_parameters": optimized_params,
+                "monthly_performance": monthly_data
+            },
+            "summary": {
+                "strategy": "MACD with Bayesian Optimization",
+                "period": f"{start_date_str} to {end_date_str}",
+                "stocks_traded": stock_symbols,
+                "performance": f"{total_return:+.2f}%",
+                "risk_level": strategy_mode
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Auto-trading error: {str(e)}")
+        return jsonify({
+            "error": f"Auto-trading failed: {str(e)}",
+            "suggestion": "Try with different parameters or check system status"
         }), 500
 
 # Load environment variables
