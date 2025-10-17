@@ -211,7 +211,7 @@ def get_optimal_stocks():
         # Get the parameters we need
         timeframe = request.args.get('timeframe', default = 'medium')
         max_stocks = request.args.get('max_stocks', default=5, type=int)
-        strategy_mode = request.args.get('strategy_mode', default = 'moderate')
+        risk = request.args.get('risk', default = 'moderate')
 
         # Check the timeframe
         valid_timeframes = ['short', 'medium', 'long']
@@ -226,7 +226,7 @@ def get_optimal_stocks():
         selected_stocks = screener.screen_stocks_for_macd(timeframe=timeframe, max_stocks=max_stocks)
 
         if not selected_stocks:
-            return jsonify({"error": "No suitable stocks found with your criteria. Please try different timeframe or strategy mode settings."}), 400
+            return jsonify({"error": "No suitable stocks found with your criteria. Please try different timeframe or risk level settings."}), 400
         
         # Add stock reasoning
         for stock in selected_stocks:
@@ -235,7 +235,7 @@ def get_optimal_stocks():
         response_data = {
             "selected_stocks": selected_stocks,
             "timeframe": timeframe,
-            "strategy_mode": strategy_mode,
+            "risk": risk,
             "total_candidates_screened": int(len(selected_stocks) * 10),  # Rough estimate
             "selection_criteria": f"MACD-optimized for {timeframe}-term trading",
             "timestamp": datetime.now().isoformat()
@@ -259,7 +259,7 @@ def auto_trade():
 
         # Get parameters
         timeframe = request.args.get('timeframe', default='medium')
-        strategy_mode = request.args.get('strategy_mode', default='moderate')
+        risk = request.args.get('risk', default='moderate')
         max_stocks = request.args.get('max_stocks', default=5, type=int)
         start_date_str = request.args.get('start_date')
         end_date_str = request.args.get('end_date')  
@@ -282,7 +282,7 @@ def auto_trade():
         except ValueError as e:
             return jsonify({"error": f"Invalid date format. Use YYYY-MM-DD: {str(e)}"}), 400
 
-        logger.info(f"Auto-trading: timeframe={timeframe}, strategy_mode={strategy_mode}, dates={start_date_str} to {end_date_str}")
+        logger.info(f"Auto-trading: timeframe={timeframe}, risk={risk}, dates={start_date_str} to {end_date_str}")
 
         # Select optimal stocks
         screener = StockScreener()
@@ -290,7 +290,7 @@ def auto_trade():
 
         if not selected_stocks:
             return jsonify({
-                "error": "No suitable stocks found for auto-trading. Please try different timeframe or strategy_mode settings."
+                "error": "No suitable stocks found for auto-trading. Please try different timeframe or risk settings."
             }), 400
 
         # Add reasoning to selected stocks (for me)
@@ -342,7 +342,7 @@ def auto_trade():
                 "selected_stocks": selected_stocks,
                 "selection_criteria": f"MACD-optimized for {timeframe}-term trading",
                 "timeframe": timeframe,
-                "strategy_mode": strategy_mode,
+                "risk": risk,
                 "total_candidates_screened": len(selected_stocks) * 10  # Rough estimate
             },
             "trading_results": {
@@ -358,7 +358,7 @@ def auto_trade():
                 "period": f"{start_date_str} to {end_date_str}",
                 "stocks_traded": stock_symbols,
                 "performance": f"{total_return:+.2f}%",
-                "risk_level": strategy_mode
+                "risk_level": risk
             },
             "timestamp": datetime.now().isoformat()
         }
