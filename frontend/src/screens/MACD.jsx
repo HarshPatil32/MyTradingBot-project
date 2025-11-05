@@ -715,7 +715,7 @@ const MACDTrading = () => {
                             <div className={`p-4 rounded-lg mb-4 ${
                                 darkMode ? 'bg-gray-700' : 'bg-blue-50'
                             }`}>
-                                <h3 className="font-semibold text-blue-600 mb-3">🎯 Auto-Select Optimal Stocks</h3>
+                                <h3 className="font-semibold text-blue-600 mb-3">Auto-Select Optimal Stocks</h3>
                                 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                                     <div>

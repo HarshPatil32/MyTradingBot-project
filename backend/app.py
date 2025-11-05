@@ -223,12 +223,32 @@ def get_optimal_stocks():
             return jsonify({"error": "Please choose a number between 1 and 10 inclusive"})
         
         screener = StockScreener()
-        selected_stocks = screener.screen_stocks_for_macd(timeframe=timeframe, max_stocks=max_stocks)
+        
+        try:
+            is_deployment = os.environ.get('PORT') is not None
+            
+            if is_deployment:
+                # Use ultra-fast method for deployment
+                selected_stocks = screener.screen_stocks_fast_deployment(
+                    timeframe=timeframe, 
+                    max_stocks=max_stocks
+                )
+            else:
+                # Use full method for local development (temporary, will try to optimize)
+                selected_stocks = screener.screen_stocks_for_macd(
+                    timeframe=timeframe, 
+                    max_stocks=max_stocks, 
+                    timeout_seconds=45
+                )
+        except Exception as screening_error:
+            logger.error(f"Stock screening failed: {screening_error}")
+            # Return fallback stocks immediately instead of error
+            selected_stocks = screener.get_fallback_stocks(max_stocks)
+            logger.info("Using fallback stocks due to screening timeout")
 
         if not selected_stocks:
             return jsonify({"error": "No suitable stocks found with your criteria. Please try different timeframe or risk level settings."}), 400
         
-        # Add stock reasoning
         for stock in selected_stocks:
             stock['reason'] = generate_selection_reason(stock['score'])
 
@@ -284,9 +304,31 @@ def auto_trade():
 
         logger.info(f"Auto-trading: timeframe={timeframe}, risk={risk}, dates={start_date_str} to {end_date_str}")
 
-        # Select optimal stocks
+        # Select optimal stocks with timeout handling
         screener = StockScreener()
-        selected_stocks = screener.screen_stocks_for_macd(timeframe=timeframe, max_stocks=max_stocks)
+        
+        try:
+            # Check if we're in deployment
+            is_deployment = os.environ.get('PORT') is not None
+            
+            if is_deployment:
+                # Always use fast method for auto-trade in deployment
+                selected_stocks = screener.screen_stocks_fast_deployment(
+                    timeframe=timeframe, 
+                    max_stocks=max_stocks
+                )
+            else:
+                # Use full method locally with short timeout
+                selected_stocks = screener.screen_stocks_for_macd(
+                    timeframe=timeframe, 
+                    max_stocks=max_stocks,
+                    timeout_seconds=20  # Very short timeout for auto-trade
+                )
+        except Exception as screening_error:
+            logger.error(f"Auto-trade stock screening failed: {screening_error}")
+            # Use fallback instead of failing
+            selected_stocks = screener.get_fallback_stocks(max_stocks)
+            logger.info("Using fallback stocks for auto-trade due to screening timeout")
 
         if not selected_stocks:
             return jsonify({
