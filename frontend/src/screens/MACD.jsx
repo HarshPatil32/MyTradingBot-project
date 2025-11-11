@@ -345,8 +345,43 @@ const MACDTrading = () => {
         setIsAutoSelecting(true);
         setErrorMessage('');
         
+        // Set date range based on selected timeframe
+        const end = new Date();
+        const start = new Date();
+        
+        switch (timeframe) {
+            case 'short':
+                // Short-term: 1-3 months, let's use 3 months
+                start.setMonth(end.getMonth() - 3);
+                break;
+            case 'medium':
+                // Medium-term: 3-12 months, let's use 1 year
+                start.setFullYear(end.getFullYear() - 1);
+                break;
+            case 'long':
+                // Long-term: 1+ years, let's use 3 years
+                start.setFullYear(end.getFullYear() - 3);
+                break;
+            default:
+                start.setFullYear(end.getFullYear() - 1);
+        }
+        
+        const startDateStr = start.toISOString().split('T')[0];
+        const endDateStr = end.toISOString().split('T')[0];
+        
+        setStartDate(startDateStr);
+        setEndDate(endDateStr);
+        validateField('startDate', startDateStr);
+        validateField('endDate', endDateStr);
+        
+        // Ensure initial balance is set
+        if (!initialBalance || initialBalance <= 0) {
+            setInitialBalance(100000);
+            validateField('initialBalance', 100000);
+        }
+        
         try {
-            console.log(`Auto-selecting stocks for ${timeframe} timeframe...`);
+            console.log(`Auto-selecting stocks for ${timeframe} timeframe (${startDateStr} to ${endDateStr})...`);
             
             const response = await axios.get(`${API_URL}/get-optimal-stocks`, {
                 params: {
@@ -371,7 +406,8 @@ const MACDTrading = () => {
                 setSelectedStocksData(stocks);
                 validateField('stocks', stockSymbols);
                 
-                showSuccessMessage(`Auto-selected ${stocks.length} optimal stocks for ${timeframe}-term MACD strategy!`);
+                const timeframeLabel = timeframe === 'short' ? '3-month' : timeframe === 'medium' ? '1-year' : '3-year';
+                showSuccessMessage(`Auto-selected ${stocks.length} optimal stocks for ${timeframeLabel} ${timeframe}-term strategy!`);
                 console.log('Selected stocks:', stocks);
             } else {
                 setErrorMessage('No stocks could be selected. Please try manual selection.');
@@ -394,6 +430,38 @@ const MACDTrading = () => {
     };
 
     const runAutoTrade = async () => {
+        if (!startDate || !endDate) {
+            const end = new Date();
+            const start = new Date();
+            
+            switch (timeframe) {
+                case 'short':
+                    start.setMonth(end.getMonth() - 3);
+                    break;
+                case 'medium':
+                    start.setFullYear(end.getFullYear() - 1);
+                    break;
+                case 'long':
+                    start.setFullYear(end.getFullYear() - 3);
+                    break;
+                default:
+                    start.setFullYear(end.getFullYear() - 1);
+            }
+            
+            const startDateStr = start.toISOString().split('T')[0];
+            const endDateStr = end.toISOString().split('T')[0];
+            
+            setStartDate(startDateStr);
+            setEndDate(endDateStr);
+            validateField('startDate', startDateStr);
+            validateField('endDate', endDateStr);
+        }
+        
+        if (!initialBalance || initialBalance <= 0) {
+            setInitialBalance(100000);
+            validateField('initialBalance', 100000);
+        }
+        
         if (!isFormValid()) {
             setErrorMessage('Please ensure all fields are valid before running auto-trade.');
             return;
@@ -846,7 +914,7 @@ const MACDTrading = () => {
                                     <div className="mb-2">
                                         <h3 className="font-medium text-sm mb-2">
                                             Selected Stocks ({myStocks.length})
-                                            {selectedStocksData.length > 0 && <span className="text-green-600 ml-1">✨ Auto-selected</span>}
+                                            {selectedStocksData.length > 0 && <span className="text-green-600 ml-1">Auto-selected</span>}
                                         </h3>
                                     </div>
                                 )}
@@ -886,7 +954,7 @@ const MACDTrading = () => {
                                     <div className={`mt-3 p-3 rounded-lg text-sm ${
                                         darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-50 text-gray-600'
                                     }`}>
-                                        <div className="font-medium mb-2">💡 Selection Reasoning:</div>
+                                        <div className="font-medium mb-2">Selection Reasoning:</div>
                                         <div className="space-y-1">
                                             {selectedStocksData.map((stock, idx) => (
                                                 <div key={idx} className="flex justify-between">
@@ -1019,7 +1087,7 @@ const MACDTrading = () => {
                                         darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'
                                     } shadow-lg`}>
                                         <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                                            📈 Performance Summary
+                                            Performance Summary
                                         </h2>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                             {/* MACD Strategy Results */}
@@ -1089,8 +1157,8 @@ const MACDTrading = () => {
                                                 <div className="flex items-center justify-between">
                                                     <span className="font-semibold">
                                                         {optimizationPerformance.best_balance > spyFinalBalance 
-                                                            ? '🎉 MACD Strategy Outperformed SPY!' 
-                                                            : '📉 SPY Outperformed MACD Strategy'}
+                                                            ? 'MACD Strategy Outperformed SPY!' 
+                                                            : 'SPY Outperformed MACD Strategy'}
                                                     </span>
                                                     <span className={`font-bold text-lg ${
                                                         optimizationPerformance.best_balance > spyFinalBalance ? 'text-green-600' : 'text-red-600'
@@ -1109,7 +1177,7 @@ const MACDTrading = () => {
                                     darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'
                                 } shadow-lg`}>
                                     <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                                        📊 Detailed Backtest Results
+                                        Detailed Backtest Results
                                     </h2>
                                     <div
                                         className={`p-4 rounded-lg ${
