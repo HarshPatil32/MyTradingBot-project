@@ -4,54 +4,6 @@ csv_analyzer.py
 Parses, validates, and normalises uploaded backtest CSV files before
 handing the cleaned trade data off to the analysis modules.
 
-Responsibilities
-----------------
-1. Format detection  – determine whether the file is a "detailed trade
-   list" or a "summary" dict based on its column headers.
-2. Parsing           – read rows into typed Python dicts; normalise
-   column names, dates, and numeric fields.
-3. Validation        – flag unpaired BUY/SELL sequences, duplicate
-   trades, and invalid field values; return structured errors instead
-   of raising exceptions.
-4. PnL calculation   – compute per-trade P&L and a cumulative equity
-   curve from a detailed trade list.
-5. Main entry point  – ``analyze_uploaded_backtest()`` orchestrates all
-   of the above and returns a single normalised dict ready for
-   ``reality_check.run_reality_check()``.
-
-Supported input formats
------------------------
-A. Detailed trade list (one row per trade leg):
-
-   date, symbol, action, price, shares
-   2024-01-15, AAPL, BUY,  185.50, 10
-   2024-02-20, AAPL, SELL, 195.20, 10
-
-B. Summary dict (aggregate metrics only):
-
-   initial_capital, final_balance, num_trades, win_rate, start_date, end_date
-   10000, 14700, 156, 0.58, 2021-01-04, 2024-12-31
-
-Edge cases handled
-------------------
-- BOM (\\ufeff) in UTF-8 files is stripped before parsing.
-- Semicolon-delimited files are normalised to comma-delimited.
-- Free tier: ``analyze_uploaded_backtest`` enforces FREE_TIER_TRADE_LIMIT
-  and returns a structured error if exceeded.
-- Malformed input always returns a structured error dict; nothing here
-  raises an unhandled exception that would produce a 500 in ``app.py``.
-- All-BUY or all-SELL trade lists are flagged by ``validate_trades``
-  without crashing the pairing logic.
-
-Public API
-----------
-sanitize_csv(csv_data)              →  str
-detect_format(csv_data)             →  str           ("detailed" | "summary")
-parse_detailed(csv_data)            →  list[dict]
-parse_summary(csv_data)             →  dict
-validate_trades(trades)             →  list[dict]    (list of validation warnings)
-calculate_pnl(trades)               →  dict
-analyze_uploaded_backtest(csv_data) →  dict          ← main entry-point
 """
 
 from __future__ import annotations
