@@ -1,9 +1,7 @@
 import os
 import logging
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
-import alpaca_trade_api as tradeapi
-from alpaca_trade_api import TimeFrame
+import yfinance as yf
 import pandas as pd
 import numpy as np
 
@@ -15,20 +13,12 @@ except ImportError:
     TALIB_AVAILABLE = False
     print("TA-Lib not available, using pandas implementation")
 
-load_dotenv()
-
-API_KEY_ID = os.getenv("API_KEY_ID")
-API_SECRET_KEY = os.getenv("API_SECRET_KEY")
-url = "https://paper-api.alpaca.markets"
-api = tradeapi.REST(API_KEY_ID, API_SECRET_KEY, url)
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class StockScreener:
     def __init__(self):
-        self.api = api
-        self._data_cache = {} 
+        self._data_cache = {}
     
     def get_stock_universe(self):
         """Get basic stock universe from Alpaca with caching and fallback"""
@@ -56,26 +46,6 @@ class StockScreener:
             
 
             unique_stocks = list(dict.fromkeys(curated_stocks))
-            
-            # Try to get additional stocks from API if time allows
-            try:
-                assets = self.api.list_assets(status='active', asset_class='us_equity')
-                additional_stocks = []
-                
-                for asset in assets[:100]:  # Limit to first 100 for speed
-                    if (asset.tradable and 
-                        asset.exchange in ['NYSE', 'NASDAQ'] and
-                        not asset.symbol.endswith('.') and
-                        len(asset.symbol) <= 4 and
-                        asset.symbol not in unique_stocks):
-                        additional_stocks.append(asset.symbol)
-                        if len(additional_stocks) >= 50:  
-                            break
-                
-                unique_stocks.extend(additional_stocks)
-                
-            except Exception as api_error:
-                logger.warning(f"Could not fetch additional stocks from API: {api_error}")
             
             logger.info(f"Using curated universe of {len(unique_stocks)} stocks")
             return unique_stocks[:100]  
@@ -107,12 +77,8 @@ class StockScreener:
                 end_date = datetime.now()
                 start_date = end_date - timedelta(days=days)
                 
-                data = self.api.get_bars(
-                    symbol, 
-                    TimeFrame.Day,
-                    start=start_date.isoformat() + 'Z',
-                    end=end_date.isoformat() + 'Z'
-                ).df
+                data = yf.download(symbol, start=start_date, end=end_date, auto_adjust=True, progress=False)
+                data.columns = data.columns.str.lower()
                 
                 if len(data) < 30:  
                     return None
