@@ -419,7 +419,10 @@ load_dotenv()
 
 if __name__ == "__main__":
     # Get port from environment variable (Render provides this) or default to 5001
-    port = int(os.environ.get('PORT', 5001))
+    try:
+        port = int(os.environ.get('PORT', 5001))
+    except ValueError as e:
+        raise ValueError("PORT must be a valid integer") from e
     
     # Run the app on all interfaces for Render deployment
     app.run(host='0.0.0.0', port=port, debug=False)
