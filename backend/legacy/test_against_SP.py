@@ -1,31 +1,11 @@
-from dotenv import load_dotenv
-import alpaca_trade_api as tradeapi
-from flask import Flask, request, jsonify
-from alpaca_trade_api import TimeFrame
-import os
-
-load_dotenv()
-
-API_KEY_ID = os.getenv("API_KEY_ID")
-API_SECRET_KEY = os.getenv("API_SECRET_KEY")
-
-url = "https://paper-api.alpaca.markets"
-
-
-
-
-
-api = tradeapi.REST(API_KEY_ID, API_SECRET_KEY, url)
+import yfinance as yf
 
 def get_spy_investment(start_date, end_date, initial_balance=100000):
     """Calculates the final balance of an initial investment in SPY from start_date to end_date."""
     
-    data = api.get_bars(
-        'SPY', TimeFrame.Day, 
-        start=start_date.isoformat() + 'Z', 
-        end=end_date.isoformat() + 'Z'
-    ).df
-    
+    data = yf.download('SPY', start=start_date, end=end_date, auto_adjust=True, progress=False)
+    data.columns = data.columns.str.lower()
+
     if data.empty:
         return "No data available for SPY in the specified date range.", 400
 

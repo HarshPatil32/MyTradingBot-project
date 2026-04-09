@@ -1,34 +1,17 @@
 import os
-from dotenv import load_dotenv
-import alpaca_trade_api as tradeapi
-from flask import Flask, request, jsonify
-import requests
 from datetime import datetime, timedelta
-from alpaca_trade_api import TimeFrame
+import yfinance as yf
 import pandas as pd
 import numpy as np
 import time
 
-# Try to import TA-Lib, fall back to pandas implementation if not available
 try:
     import talib
     TALIB_AVAILABLE = True
-    print("✅ TA-Lib imported successfully")
+    print("TA-Lib imported successfully")
 except ImportError:
     TALIB_AVAILABLE = False
-    print("⚠️ TA-Lib not available, using pandas implementation")
-
-load_dotenv()
-
-API_KEY_ID = os.getenv("API_KEY_ID")
-API_SECRET_KEY = os.getenv("API_SECRET_KEY")
-
-url = "https://paper-api.alpaca.markets"
-
-
-
-
-api = tradeapi.REST(API_KEY_ID, API_SECRET_KEY, url)
+    print("TA-Lib not available, using pandas implementation")
 
 def calculate_indicators(data, fastperiod, slowperiod, signalperiod):
     """
@@ -66,12 +49,9 @@ def backtest_strategy_MACD(symbols, start_date, end_date, initial_balance=100000
     monthly_performance = [] if return_monthly_data else None
 
     for symbol in symbols:
-        
-        data = api.get_bars(
-            symbol, TimeFrame.Day,
-            start=start_date.isoformat() + 'Z',
-            end=end_date.isoformat() + 'Z'
-        ).df
+
+        data = yf.download(symbol, start=start_date, end=end_date, auto_adjust=True, progress=False)
+        data.columns = data.columns.str.lower()
 
         try:
             data = calculate_indicators(data, fastperiod, slowperiod, signalperiod)
