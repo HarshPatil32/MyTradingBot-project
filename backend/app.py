@@ -83,6 +83,9 @@ def _parse_allowed_origins() -> "str | list[str]":
 
 ALLOWED_ORIGINS = _parse_allowed_origins()
 
+# Strict policy for a JSON-only API. Expand this if HTML routes are added.
+CSP_POLICY = "default-src 'none'; frame-ancestors 'none'; base-uri 'self'"
+
 # Try to import trading modules with error handling
 try:
     from test_against_SP import get_spy_investment, generate_spy_monthly_performance
@@ -105,6 +108,11 @@ CORS(app, resources={
 })
 
 logger = logging.getLogger(__name__)
+
+@app.after_request
+def set_security_headers(response):
+    response.headers["Content-Security-Policy"] = CSP_POLICY
+    return response
 
 @app.errorhandler(404)
 def not_found(error):
