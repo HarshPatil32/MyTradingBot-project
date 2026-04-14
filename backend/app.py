@@ -8,6 +8,48 @@ import requests
 import json
 import numpy as np
 
+# Load env vars early so they are available at module scope (picked up by gunicorn too)
+load_dotenv()
+
+# Configure logging before validation so INFO messages are not swallowed
+logging.basicConfig(level=logging.INFO)
+
+# Env vars the app cares about. Add new secrets here as they are introduced.
+# required=True  -> WARNING logged on boot if missing
+# required=False -> INFO logged on boot if missing (has a safe fallback)
+_ENV_VAR_MANIFEST = (
+    {"name": "PORT",           "required": False, "description": "Port Flask listens on (defaults to 5001)"},
+    {"name": "FLASK_DEBUG",    "required": False, "description": "Enable Flask debug mode"},
+)
+
+
+def validate_env_vars():
+    """Check for expected env vars and log warnings for any that are missing."""
+    missing_required = []
+    missing_optional = []
+
+    for var in _ENV_VAR_MANIFEST:
+        if not os.environ.get(var["name"]):
+            if var["required"]:
+                logging.warning("Missing required env var: %s (%s)", var["name"], var["description"])
+                missing_required.append(var["name"])
+            else:
+                logging.info("Optional env var not set: %s (%s)", var["name"], var["description"])
+                missing_optional.append(var["name"])
+
+    return {
+        "missing_required": missing_required,
+        "missing_optional": missing_optional,
+        "all_present": len(missing_required) == 0,
+    }
+
+
+# Skip during test runs to avoid noisy warnings and protect against future required vars
+if not os.getenv("TESTING"):
+    ENV_STARTUP_STATUS = validate_env_vars()
+else:
+    ENV_STARTUP_STATUS = {"missing_required": [], "missing_optional": [], "all_present": True}
+
 # Try to import trading modules with error handling
 try:
     from test_against_SP import get_spy_investment, generate_spy_monthly_performance
@@ -30,8 +72,6 @@ CORS(app, resources={
     }
 })
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @app.errorhandler(404)
@@ -44,7 +84,16 @@ def internal_error(error):
 
 @app.route("/", methods=["GET"])
 def health_check():
-    return jsonify({"status": "API is running", "message": "Flask trading API"}), 200
+    resp = {
+        "status": "API is running",
+        "message": "Flask trading API",
+        "env_status": {
+            "all_present": ENV_STARTUP_STATUS["all_present"],
+            # Only expose missing var names in debug mode to avoid information disclosure
+            "missing_required": ENV_STARTUP_STATUS["missing_required"] if app.debug else [],
+        },
+    }
+    return jsonify(resp), 200
 
 @app.route("/heartbeat", methods=["GET"])
 def heartbeat():
@@ -414,12 +463,12 @@ def auto_trade():
             "suggestion": "Try with different parameters or check system status"
         }), 500
 
-# Load environment variables
-load_dotenv()
-
 if __name__ == "__main__":
     # Get port from environment variable (Render provides this) or default to 5001
-    port = int(os.environ.get('PORT', 5001))
+    try:
+        port = int(os.environ.get('PORT', 5001))
+    except ValueError as e:
+        raise ValueError("PORT must be a valid integer") from e
     
     # Run the app on all interfaces for Render deployment
     app.run(host='0.0.0.0', port=port, debug=False)

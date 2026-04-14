@@ -1,4 +1,5 @@
 .env
+.venv/
 
 # Python cache files
 *.pyc
@@ -24,6 +25,7 @@ node_modules/
 
 # Environment variables
 .env
+!.env.example
 .env.local
 .env.development.local
 .env.test.local

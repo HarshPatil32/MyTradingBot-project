@@ -27,9 +27,6 @@ pip install "numpy>=1.26.0"
 pip install "pandas>=2.1.0"
 pip install "scikit-learn>=1.3.0"
 
-echo "Installing alpaca trading API..."
-pip install "alpaca-trade-api>=3.1.1"
-
 # Try to install TA-Lib using multiple approaches
 echo "Installing TA-Lib..."
 
@@ -58,6 +55,5 @@ python -c "import flask; print(f'Flask: {flask.__version__}')"
 python -c "import numpy; print(f'NumPy: {numpy.__version__}')"
 python -c "import pandas; print(f'Pandas: {pandas.__version__}')"
 python -c "import sklearn; print(f'Scikit-learn: {sklearn.__version__}')"
-python -c "import alpaca_trade_api; print('Alpaca Trade API: OK')"
 
 echo "Build completed successfully!"

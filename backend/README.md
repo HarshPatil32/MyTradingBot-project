@@ -41,4 +41,9 @@ The server will start on `http://localhost:5001`
 
 ## Environment Variables
 
-No environment variables required for basic functionality.
+Copy `backend/.env.example` to `backend/.env` for local development (`.env` is gitignored).
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `PORT` | No | `5001` | Port the server binds to. Injected automatically by Render. |
+| `FLASK_ENV` | No | — | Flask environment mode. Set to `development` locally. |
