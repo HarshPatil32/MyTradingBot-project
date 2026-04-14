@@ -66,6 +66,86 @@ class TestValidateEnvVarsLogic:
             assert "supersecret" not in record.message
 
 
+class TestAllowedOriginsParsing:
+    def test_var_unset_returns_wildcard(self, monkeypatch):
+        monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
+        from app import _parse_allowed_origins
+        assert _parse_allowed_origins() == "*"
+
+    def test_explicit_wildcard_returns_string(self, monkeypatch):
+        monkeypatch.setenv("ALLOWED_ORIGINS", "*")
+        from app import _parse_allowed_origins
+        assert _parse_allowed_origins() == "*"
+
+    def test_single_origin(self, monkeypatch):
+        monkeypatch.setenv("ALLOWED_ORIGINS", "https://mytradingbot.vercel.app")
+        from app import _parse_allowed_origins
+        assert _parse_allowed_origins() == ["https://mytradingbot.vercel.app"]
+
+    def test_multiple_origins_comma_separated(self, monkeypatch):
+        monkeypatch.setenv("ALLOWED_ORIGINS", "https://foo.com,https://bar.com")
+        from app import _parse_allowed_origins
+        assert _parse_allowed_origins() == ["https://foo.com", "https://bar.com"]
+
+    def test_whitespace_around_origins_is_stripped(self, monkeypatch):
+        monkeypatch.setenv("ALLOWED_ORIGINS", "  https://foo.com , https://bar.com  ")
+        from app import _parse_allowed_origins
+        assert _parse_allowed_origins() == ["https://foo.com", "https://bar.com"]
+
+    def test_trailing_comma_ignored(self, monkeypatch):
+        monkeypatch.setenv("ALLOWED_ORIGINS", "https://foo.com,")
+        from app import _parse_allowed_origins
+        assert _parse_allowed_origins() == ["https://foo.com"]
+
+    def test_empty_string_falls_back_to_wildcard(self, monkeypatch, caplog):
+        monkeypatch.setenv("ALLOWED_ORIGINS", "")
+        import logging
+        from app import _parse_allowed_origins
+        with caplog.at_level(logging.WARNING):
+            result = _parse_allowed_origins()
+        assert result == "*"
+        assert any("empty" in r.message for r in caplog.records)
+
+    def test_whitespace_only_falls_back_to_wildcard(self, monkeypatch, caplog):
+        monkeypatch.setenv("ALLOWED_ORIGINS", "   ")
+        import logging
+        from app import _parse_allowed_origins
+        with caplog.at_level(logging.WARNING):
+            result = _parse_allowed_origins()
+        assert result == "*"
+        assert any("empty" in r.message for r in caplog.records)
+
+    def test_invalid_scheme_logs_warning(self, monkeypatch, caplog):
+        monkeypatch.setenv("ALLOWED_ORIGINS", "not-a-url,https://good.com")
+        import logging
+        from app import _parse_allowed_origins
+        with caplog.at_level(logging.WARNING):
+            result = _parse_allowed_origins()
+        assert result == ["not-a-url", "https://good.com"]
+        assert any("not-a-url" in r.message for r in caplog.records)
+
+    def test_valid_origins_no_warning(self, monkeypatch, caplog):
+        monkeypatch.setenv("ALLOWED_ORIGINS", "https://foo.com,http://localhost:3000")
+        import logging
+        from app import _parse_allowed_origins
+        with caplog.at_level(logging.WARNING):
+            result = _parse_allowed_origins()
+        assert result == ["https://foo.com", "http://localhost:3000"]
+        assert not caplog.records
+
+    def test_allowed_origins_in_manifest(self, monkeypatch):
+        monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
+        from app import validate_env_vars
+        result = validate_env_vars()
+        assert "ALLOWED_ORIGINS" in result["missing_optional"]
+
+    def test_allowed_origins_not_in_missing_when_set(self, monkeypatch):
+        monkeypatch.setenv("ALLOWED_ORIGINS", "https://foo.com")
+        from app import validate_env_vars
+        result = validate_env_vars()
+        assert "ALLOWED_ORIGINS" not in result["missing_optional"]
+
+
 class TestHealthCheckEnvStatus:
     @pytest.fixture(scope="class")
     def client(self):

@@ -18,8 +18,9 @@ logging.basicConfig(level=logging.INFO)
 # required=True  -> WARNING logged on boot if missing
 # required=False -> INFO logged on boot if missing (has a safe fallback)
 _ENV_VAR_MANIFEST = (
-    {"name": "PORT",           "required": False, "description": "Port Flask listens on (defaults to 5001)"},
-    {"name": "FLASK_DEBUG",    "required": False, "description": "Enable Flask debug mode"},
+    {"name": "PORT",             "required": False, "description": "Port Flask listens on (defaults to 5001)"},
+    {"name": "FLASK_DEBUG",      "required": False, "description": "Enable Flask debug mode"},
+    {"name": "ALLOWED_ORIGINS",  "required": False, "description": "Comma-separated CORS origins; defaults to * (all) if not set"},
 )
 
 
@@ -50,6 +51,38 @@ if not os.getenv("TESTING"):
 else:
     ENV_STARTUP_STATUS = {"missing_required": [], "missing_optional": [], "all_present": True}
 
+# Resolve allowed CORS origins. "*" keeps local dev open; in production set
+# ALLOWED_ORIGINS=https://yourdomain.com (comma-separated for multiple).
+def _parse_allowed_origins() -> "str | list[str]":
+    _logger = logging.getLogger(__name__)
+    raw_env = os.getenv("ALLOWED_ORIGINS")
+
+    # Var not set at all — safe default for local dev
+    if raw_env is None:
+        return "*"
+
+    raw = raw_env.strip()
+
+    if not raw:
+        _logger.warning(
+            "ALLOWED_ORIGINS is set but empty; falling back to '*'. "
+            "Set a real domain in production."
+        )
+        return "*"
+
+    if raw == "*":
+        return "*"
+
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+
+    for origin in origins:
+        if not origin.startswith(("http://", "https://")):
+            _logger.warning("ALLOWED_ORIGINS entry looks invalid (expected http/https): %s", origin)
+
+    return origins if origins else "*"
+
+ALLOWED_ORIGINS = _parse_allowed_origins()
+
 # Try to import trading modules with error handling
 try:
     from test_against_SP import get_spy_investment, generate_spy_monthly_performance
@@ -62,13 +95,12 @@ except ImportError as e:
 
 app = Flask(__name__)
 
-# Configure CORS properly - allow all origins for now (you can restrict this later)
 CORS(app, resources={
     r"/*": {
-        "origins": "*",  # Allow all origins for deployment
+        "origins": ALLOWED_ORIGINS,
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": False  # Set to False when allowing all origins
+        "supports_credentials": False
     }
 })
 
