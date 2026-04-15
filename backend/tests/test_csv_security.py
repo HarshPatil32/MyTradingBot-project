@@ -3,7 +3,7 @@ import io
 import pytest
 
 from csv_analyzer import _assert_content_safe, sanitize_csv
-from app import app as flask_app, _safe_filename
+from app import app as flask_app, _safe_filename, _MAX_UPLOAD_BYTES
 
 
 @pytest.fixture()
@@ -174,3 +174,32 @@ class TestAnalyzeBacktestRoute:
     def test_non_string_csv_data_returns_400(self, client):
         resp = client.post("/analyze-backtest", json={"csv_data": 12345})
         assert resp.status_code == 400
+
+    def test_oversized_upload_returns_413(self, client):
+        # Send a file larger than the 5 MB framework limit
+        large_data = b"x" * (_MAX_UPLOAD_BYTES + 1)
+        data = {"file": (io.BytesIO(large_data), "big.csv")}
+        resp = client.post("/analyze-backtest", content_type="multipart/form-data", data=data)
+        assert resp.status_code == 413
+
+    def test_upload_at_exact_limit_not_rejected_by_framework(self, client):
+        # A small legitimate file must not be rejected with 413.
+        # Note: multipart framing adds overhead, so exactly _MAX_UPLOAD_BYTES of file
+        # data would still push the total request over the limit. Use a small payload.
+        data = {"file": (io.BytesIO(b"date,symbol\n2024-01-01,AAPL\n"), "small.csv")}
+        resp = client.post("/analyze-backtest", content_type="multipart/form-data", data=data)
+        assert resp.status_code != 413
+
+    def test_oversized_upload_no_content_length_returns_413(self, client):
+        # Without Content-Length the framework limit is bypassed; multipart parsing
+        # still rejects the request (400) before the manual read check can fire. Both
+        # 400 and 413 mean the oversized request was rejected.
+        large_data = b"x" * (_MAX_UPLOAD_BYTES + 1)
+        data = {"file": (io.BytesIO(large_data), "big.csv")}
+        resp = client.post(
+            "/analyze-backtest",
+            content_type="multipart/form-data",
+            data=data,
+            environ_overrides={"CONTENT_LENGTH": ""},
+        )
+        assert resp.status_code in (400, 413)

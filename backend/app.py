@@ -8,6 +8,7 @@ import requests
 import json
 import numpy as np
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import HTTPException
 from csv_analyzer import analyze_uploaded_backtest
 
 # Load env vars early so they are available at module scope (picked up by gunicorn too)
@@ -88,6 +89,10 @@ ALLOWED_ORIGINS = _parse_allowed_origins()
 # Strict policy for a JSON-only API. Expand this if HTML routes are added.
 CSP_POLICY = "default-src 'none'; frame-ancestors 'none'; base-uri 'self'"
 
+_MB = 1024 * 1024
+# Max upload size for all file uploads (5 MB). Applies to every route via MAX_CONTENT_LENGTH.
+_MAX_UPLOAD_BYTES = 5 * _MB
+
 # Try to import trading modules with error handling
 try:
     from test_against_SP import get_spy_investment, generate_spy_monthly_performance
@@ -99,6 +104,7 @@ except ImportError as e:
     TRADING_MODULES_AVAILABLE = False
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = _MAX_UPLOAD_BYTES
 
 CORS(app, resources={
     r"/*": {
@@ -123,6 +129,11 @@ def not_found(error):
 @app.errorhandler(500)
 def internal_error(error):
     return jsonify({"error": "Internal server error"}), 500
+
+@app.errorhandler(413)
+def request_too_large(error):
+    limit_mb = _MAX_UPLOAD_BYTES // _MB
+    return jsonify({"error": f"Payload too large. Maximum allowed size is {limit_mb} MB."}), 413
 
 @app.route("/", methods=["GET"])
 def health_check():
@@ -505,10 +516,6 @@ def auto_trade():
             "suggestion": "Try with different parameters or check system status"
         }), 500
 
-# Max upload size for CSV files (5 MB)
-_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
-
-
 def _safe_filename(raw: str) -> str:
     """Sanitize an upload filename to prevent path traversal."""
     name = secure_filename(raw)
@@ -521,10 +528,6 @@ def _safe_filename(raw: str) -> str:
 @app.route('/analyze-backtest', methods=['POST'])
 def analyze_backtest():
     """Accept a CSV upload and return sanitized backtest analysis."""
-    content_length = request.content_length
-    if content_length is not None and content_length > _MAX_UPLOAD_BYTES:
-        return jsonify({"error": "Payload too large. Maximum allowed size is 5 MB."}), 413
-
     try:
         if 'file' in request.files:
             upload = request.files['file']
@@ -532,9 +535,7 @@ def analyze_backtest():
                 _safe_filename(upload.filename or "")
             except ValueError:
                 return jsonify({"error": "Invalid filename."}), 400
-            raw_bytes = upload.read(_MAX_UPLOAD_BYTES + 1)
-            if len(raw_bytes) > _MAX_UPLOAD_BYTES:
-                return jsonify({"error": "Payload too large. Maximum allowed size is 5 MB."}), 413
+            raw_bytes = upload.read()
             csv_data = raw_bytes.decode("utf-8", errors="replace")
         elif request.is_json:
             body = request.get_json(silent=True) or {}
@@ -551,6 +552,8 @@ def analyze_backtest():
         # Safety checks in csv_analyzer raise ValueError with a safe message
         logger.warning("CSV upload rejected: %s", exc)
         return jsonify({"error": str(exc)}), 400
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("analyze_backtest error: %s", exc)
         return jsonify({"error": "Failed to process CSV."}), 500
