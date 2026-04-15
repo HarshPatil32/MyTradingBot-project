@@ -418,7 +418,7 @@ def calculate_taxes(
         if nt.profit > 0:
             n_win += 1
             hold = nt.hold_days if nt.hold_days is not None else 0
-            if hold >= SHORT_TERM_HOLD_DAYS:
+            if hold > SHORT_TERM_HOLD_DAYS:
                 long_gains  += nt.profit
             else:
                 short_gains += nt.profit
