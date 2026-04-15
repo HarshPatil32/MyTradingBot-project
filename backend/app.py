@@ -7,6 +7,8 @@ from datetime import datetime
 import requests
 import json
 import numpy as np
+from werkzeug.utils import secure_filename
+from csv_analyzer import analyze_uploaded_backtest
 
 # Load env vars early so they are available at module scope (picked up by gunicorn too)
 load_dotenv()
@@ -502,6 +504,57 @@ def auto_trade():
             "error": f"Auto-trading failed: {str(e)}",
             "suggestion": "Try with different parameters or check system status"
         }), 500
+
+# Max upload size for CSV files (5 MB)
+_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+def _safe_filename(raw: str) -> str:
+    """Sanitize an upload filename to prevent path traversal."""
+    name = secure_filename(raw)
+    if not name:
+        # secure_filename strips everything for names like '../../' or all-unicode
+        raise ValueError("Filename is invalid or empty after sanitization")
+    return name
+
+
+@app.route('/analyze-backtest', methods=['POST'])
+def analyze_backtest():
+    """Accept a CSV upload and return sanitized backtest analysis."""
+    content_length = request.content_length
+    if content_length is not None and content_length > _MAX_UPLOAD_BYTES:
+        return jsonify({"error": "Payload too large. Maximum allowed size is 5 MB."}), 413
+
+    try:
+        if 'file' in request.files:
+            upload = request.files['file']
+            try:
+                _safe_filename(upload.filename or "")
+            except ValueError:
+                return jsonify({"error": "Invalid filename."}), 400
+            raw_bytes = upload.read(_MAX_UPLOAD_BYTES + 1)
+            if len(raw_bytes) > _MAX_UPLOAD_BYTES:
+                return jsonify({"error": "Payload too large. Maximum allowed size is 5 MB."}), 413
+            csv_data = raw_bytes.decode("utf-8", errors="replace")
+        elif request.is_json:
+            body = request.get_json(silent=True) or {}
+            csv_data = body.get("csv_data", "")
+            if not isinstance(csv_data, str):
+                return jsonify({"error": "csv_data must be a string."}), 400
+        else:
+            return jsonify({"error": "Send a multipart file upload or JSON body with csv_data."}), 400
+
+        result = analyze_uploaded_backtest(csv_data)
+        return jsonify(result), 200
+
+    except ValueError as exc:
+        # Safety checks in csv_analyzer raise ValueError with a safe message
+        logger.warning("CSV upload rejected: %s", exc)
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logger.error("analyze_backtest error: %s", exc)
+        return jsonify({"error": "Failed to process CSV."}), 500
+
 
 if __name__ == "__main__":
     # Get port from environment variable (Render provides this) or default to 5001
