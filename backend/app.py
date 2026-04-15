@@ -7,6 +7,9 @@ from datetime import datetime
 import requests
 import json
 import numpy as np
+from werkzeug.utils import secure_filename
+from werkzeug.exceptions import HTTPException
+from csv_analyzer import analyze_uploaded_backtest
 
 # Load env vars early so they are available at module scope (picked up by gunicorn too)
 load_dotenv()
@@ -18,8 +21,9 @@ logging.basicConfig(level=logging.INFO)
 # required=True  -> WARNING logged on boot if missing
 # required=False -> INFO logged on boot if missing (has a safe fallback)
 _ENV_VAR_MANIFEST = (
-    {"name": "PORT",           "required": False, "description": "Port Flask listens on (defaults to 5001)"},
-    {"name": "FLASK_DEBUG",    "required": False, "description": "Enable Flask debug mode"},
+    {"name": "PORT",             "required": False, "description": "Port Flask listens on (defaults to 5001)"},
+    {"name": "FLASK_DEBUG",      "required": False, "description": "Enable Flask debug mode"},
+    {"name": "ALLOWED_ORIGINS",  "required": False, "description": "Comma-separated CORS origins; defaults to * (all) if not set"},
 )
 
 
@@ -50,6 +54,45 @@ if not os.getenv("TESTING"):
 else:
     ENV_STARTUP_STATUS = {"missing_required": [], "missing_optional": [], "all_present": True}
 
+# Resolve allowed CORS origins. "*" keeps local dev open; in production set
+# ALLOWED_ORIGINS=https://yourdomain.com (comma-separated for multiple).
+def _parse_allowed_origins() -> "str | list[str]":
+    _logger = logging.getLogger(__name__)
+    raw_env = os.getenv("ALLOWED_ORIGINS")
+
+    # Var not set at all — safe default for local dev
+    if raw_env is None:
+        return "*"
+
+    raw = raw_env.strip()
+
+    if not raw:
+        _logger.warning(
+            "ALLOWED_ORIGINS is set but empty; falling back to '*'. "
+            "Set a real domain in production."
+        )
+        return "*"
+
+    if raw == "*":
+        return "*"
+
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+
+    for origin in origins:
+        if not origin.startswith(("http://", "https://")):
+            _logger.warning("ALLOWED_ORIGINS entry looks invalid (expected http/https): %s", origin)
+
+    return origins if origins else "*"
+
+ALLOWED_ORIGINS = _parse_allowed_origins()
+
+# Strict policy for a JSON-only API. Expand this if HTML routes are added.
+CSP_POLICY = "default-src 'none'; frame-ancestors 'none'; base-uri 'self'"
+
+_MB = 1024 * 1024
+# Max upload size for all file uploads (5 MB). Applies to every route via MAX_CONTENT_LENGTH.
+_MAX_UPLOAD_BYTES = 5 * _MB
+
 # Try to import trading modules with error handling
 try:
     from test_against_SP import get_spy_investment, generate_spy_monthly_performance
@@ -61,18 +104,23 @@ except ImportError as e:
     TRADING_MODULES_AVAILABLE = False
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = _MAX_UPLOAD_BYTES
 
-# Configure CORS properly - allow all origins for now (you can restrict this later)
 CORS(app, resources={
     r"/*": {
-        "origins": "*",  # Allow all origins for deployment
+        "origins": ALLOWED_ORIGINS,
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": False  # Set to False when allowing all origins
+        "supports_credentials": False
     }
 })
 
 logger = logging.getLogger(__name__)
+
+@app.after_request
+def set_security_headers(response):
+    response.headers["Content-Security-Policy"] = CSP_POLICY
+    return response
 
 @app.errorhandler(404)
 def not_found(error):
@@ -81,6 +129,11 @@ def not_found(error):
 @app.errorhandler(500)
 def internal_error(error):
     return jsonify({"error": "Internal server error"}), 500
+
+@app.errorhandler(413)
+def request_too_large(error):
+    limit_mb = _MAX_UPLOAD_BYTES // _MB
+    return jsonify({"error": f"Payload too large. Maximum allowed size is {limit_mb} MB."}), 413
 
 @app.route("/", methods=["GET"])
 def health_check():
@@ -462,6 +515,49 @@ def auto_trade():
             "error": f"Auto-trading failed: {str(e)}",
             "suggestion": "Try with different parameters or check system status"
         }), 500
+
+def _safe_filename(raw: str) -> str:
+    """Sanitize an upload filename to prevent path traversal."""
+    name = secure_filename(raw)
+    if not name:
+        # secure_filename strips everything for names like '../../' or all-unicode
+        raise ValueError("Filename is invalid or empty after sanitization")
+    return name
+
+
+@app.route('/analyze-backtest', methods=['POST'])
+def analyze_backtest():
+    """Accept a CSV upload and return sanitized backtest analysis."""
+    try:
+        if 'file' in request.files:
+            upload = request.files['file']
+            try:
+                _safe_filename(upload.filename or "")
+            except ValueError:
+                return jsonify({"error": "Invalid filename."}), 400
+            raw_bytes = upload.read()
+            csv_data = raw_bytes.decode("utf-8", errors="replace")
+        elif request.is_json:
+            body = request.get_json(silent=True) or {}
+            csv_data = body.get("csv_data", "")
+            if not isinstance(csv_data, str):
+                return jsonify({"error": "csv_data must be a string."}), 400
+        else:
+            return jsonify({"error": "Send a multipart file upload or JSON body with csv_data."}), 400
+
+        result = analyze_uploaded_backtest(csv_data)
+        return jsonify(result), 200
+
+    except ValueError as exc:
+        # Safety checks in csv_analyzer raise ValueError with a safe message
+        logger.warning("CSV upload rejected: %s", exc)
+        return jsonify({"error": str(exc)}), 400
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("analyze_backtest error: %s", exc)
+        return jsonify({"error": "Failed to process CSV."}), 500
+
 
 if __name__ == "__main__":
     # Get port from environment variable (Render provides this) or default to 5001
