@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import math
 import statistics
 from datetime import datetime
 from typing import Any, Sequence
@@ -53,6 +54,17 @@ def _is_numeric_cell(value: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _parse_positive_float(value: str, field: str, row_num: int) -> float:
+    """Parse a string as a positive finite float, raising ValueError with a clear message."""
+    try:
+        result = float(value)
+    except ValueError:
+        raise ValueError(f"Row {row_num}: {field} '{value}' is not a number")
+    if math.isnan(result) or math.isinf(result) or result <= 0:
+        raise ValueError(f"Row {row_num}: {field} must be positive, got '{value}'")
+    return result
 
 
 def _assert_content_safe(csv_data: str) -> None:
@@ -134,7 +146,62 @@ def detect_format(csv_data: str) -> str:
 
 def parse_detailed(csv_data: str) -> list[dict]:
     """Parse a detailed trade-list CSV into a list of typed trade dicts."""
-    pass
+    reader = csv.DictReader(io.StringIO(csv_data))
+
+    if reader.fieldnames is None:
+        raise ValueError("CSV is empty or has no header row")
+
+    # Build normalized (lowercase, stripped) -> original fieldname mapping
+    norm_to_original: dict[str, str] = {f.strip().lower(): f for f in reader.fieldnames}
+
+    missing = REQUIRED_DETAILED_COLUMNS - norm_to_original.keys()
+    if missing:
+        raise ValueError(f"CSV missing required columns: {sorted(missing)}")
+
+    # Access each required column by its original (un-normalized) fieldname
+    col = {norm: norm_to_original[norm] for norm in REQUIRED_DETAILED_COLUMNS}
+
+    trades: list[dict] = []
+    for row_num, raw_row in enumerate(reader, start=2):
+        # Skip entirely blank rows before checking the limit
+        if all(v is None or v.strip() == "" for v in raw_row.values()):
+            continue
+
+        # Enforce limit on non-blank rows only
+        if len(trades) >= FREE_TIER_TRADE_LIMIT:
+            raise ValueError(
+                f"Trade count exceeds the free tier limit of {FREE_TIER_TRADE_LIMIT}"
+            )
+
+        date_val = raw_row[col["date"]].strip()
+        try:
+            parsed_date = datetime.strptime(date_val, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"Row {row_num}: invalid date '{date_val}', expected YYYY-MM-DD")
+        # Enforce strict zero-padded format (strptime accepts '2024-1-5' without this check)
+        if parsed_date.strftime("%Y-%m-%d") != date_val:
+            raise ValueError(f"Row {row_num}: invalid date '{date_val}', expected YYYY-MM-DD")
+
+        symbol_val = raw_row[col["symbol"]].strip().upper()
+        if not symbol_val:
+            raise ValueError(f"Row {row_num}: symbol is blank")
+
+        action_val = raw_row[col["action"]].strip().upper()
+        if action_val not in {"BUY", "SELL"}:
+            raise ValueError(f"Row {row_num}: action '{action_val}' is not BUY or SELL")
+
+        price_val = _parse_positive_float(raw_row[col["price"]].strip(), "price", row_num)
+        shares_val = _parse_positive_float(raw_row[col["shares"]].strip(), "shares", row_num)
+
+        trades.append({
+            "date": date_val,
+            "symbol": symbol_val,
+            "action": action_val,
+            "price": price_val,
+            "shares": shares_val,
+        })
+
+    return trades
 
 
 def parse_summary(csv_data: str) -> dict:
