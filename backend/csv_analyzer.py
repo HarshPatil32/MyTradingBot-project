@@ -84,7 +84,7 @@ def _assert_content_safe(csv_data: str) -> None:
     raw = csv_data.encode("utf-8", errors="replace")
 
     # Strip UTF-8 BOM before magic check so it cannot hide binary signatures
-    check_raw = raw.lstrip(b"\xef\xbb\xbf")
+    check_raw = raw[3:] if raw.startswith(b"\xef\xbb\xbf") else raw
 
     for magic in _BINARY_MAGIC:
         if check_raw.startswith(magic):
@@ -105,21 +105,44 @@ def _assert_content_safe(csv_data: str) -> None:
                 raise ValueError("CSV contains a potentially unsafe cell value")
 
 
+def _convert_semicolon_to_comma(csv_data: str) -> str:
+    """Re-serialize a semicolon-delimited CSV as comma-delimited, preserving quoted fields."""
+    out = io.StringIO()
+    writer = csv.writer(out)
+    for row in csv.reader(io.StringIO(csv_data), delimiter=";"):
+        writer.writerow(row)
+    return out.getvalue()
+
+
+def _strip_row(row: dict) -> dict:
+    # csv.DictReader can produce None for columns beyond the header width; skip those
+    return {k: (v.strip() if isinstance(v, str) else v) for k, v in row.items()}
+
+
 # ---------------------------------------------------------------------------
 # Public functions
 # ---------------------------------------------------------------------------
 
+
 def sanitize_csv(csv_data: str) -> str:
     """Strip BOM, normalise line endings, and convert semicolon delimiters to commas."""
     _assert_content_safe(csv_data)
-    # Remove UTF-8 BOM if present
-    csv_data = csv_data.lstrip("\ufeff")
+    # Remove exactly one UTF-8 BOM if present
+    if csv_data.startswith("\ufeff"):
+        csv_data = csv_data[1:]
     # Normalise line endings to \n
     csv_data = csv_data.replace("\r\n", "\n").replace("\r", "\n")
-    # Convert semicolon-delimited files to comma-delimited
-    first_line = csv_data.split("\n")[0]
-    if ";" in first_line and "," not in first_line:
-        csv_data = csv_data.replace(";", ",")
+    # Detect delimiter and convert semicolon-delimited files to comma-delimited
+    first_non_empty = next((l for l in csv_data.split("\n") if l.strip()), "")
+    try:
+        dialect = csv.Sniffer().sniff(first_non_empty, delimiters=",;")
+        logger.debug("CSV delimiter detected: %r", dialect.delimiter)
+        if dialect.delimiter == ";":
+            csv_data = _convert_semicolon_to_comma(csv_data)
+    except csv.Error:
+        # Sniffer can't decide (e.g. single-column file) — fall back to heuristic
+        if ";" in first_non_empty and "," not in first_non_empty:
+            csv_data = _convert_semicolon_to_comma(csv_data)
     return csv_data
 
 
@@ -185,19 +208,21 @@ def parse_detailed(csv_data: str) -> list[dict]:
                 f"Trade count exceeds the free tier limit of {FREE_TIER_TRADE_LIMIT}"
             )
 
-        date_val = raw_row[col["date"]].strip()
+        raw_row = _strip_row(raw_row)
+
+        date_val = raw_row[col["date"]]
         _parse_iso_date(date_val, "date", row_num)  # validation only; date stored as string
 
-        symbol_val = raw_row[col["symbol"]].strip().upper()
+        symbol_val = raw_row[col["symbol"]].upper()
         if not symbol_val:
             raise ValueError(f"Row {row_num}: symbol is blank")
 
-        action_val = raw_row[col["action"]].strip().upper()
+        action_val = raw_row[col["action"]].upper()
         if action_val not in {"BUY", "SELL"}:
             raise ValueError(f"Row {row_num}: action '{action_val}' is not BUY or SELL")
 
-        price_val = _parse_positive_float(raw_row[col["price"]].strip(), "price", row_num)
-        shares_val = _parse_positive_float(raw_row[col["shares"]].strip(), "shares", row_num)
+        price_val = _parse_positive_float(raw_row[col["price"]], "price", row_num)
+        shares_val = _parse_positive_float(raw_row[col["shares"]], "shares", row_num)
 
         trades.append({
             "date": date_val,
@@ -231,19 +256,19 @@ def parse_summary(csv_data: str) -> dict:
             continue
         if data_row is not None:
             raise ValueError("Summary CSV must contain exactly one data row")
-        data_row = raw_row
+        data_row = _strip_row(raw_row)
 
     if data_row is None:
         raise ValueError("CSV has no data rows")
 
     initial_capital = _parse_positive_float(
-        data_row[col["initial_capital"]].strip(), "initial_capital", 2
+        data_row[col["initial_capital"]], "initial_capital", 2
     )
     final_balance = _parse_positive_float(
-        data_row[col["final_balance"]].strip(), "final_balance", 2
+        data_row[col["final_balance"]], "final_balance", 2
     )
 
-    num_trades_str = data_row[col["num_trades"]].strip()
+    num_trades_str = data_row[col["num_trades"]]
     try:
         num_trades_f = float(num_trades_str)
     except ValueError:
@@ -252,7 +277,7 @@ def parse_summary(csv_data: str) -> dict:
         raise ValueError(f"Row 2: num_trades must be a positive integer, got '{num_trades_str}'")
     num_trades = int(num_trades_f)
 
-    win_rate_str = data_row[col["win_rate"]].strip()
+    win_rate_str = data_row[col["win_rate"]]
     try:
         win_rate = float(win_rate_str)
     except ValueError:
@@ -261,10 +286,10 @@ def parse_summary(csv_data: str) -> dict:
     if math.isnan(win_rate) or math.isinf(win_rate) or win_rate < 0.0 or win_rate > 1.0:
         raise ValueError(f"Row 2: win_rate must be between 0 and 1, got '{win_rate_str}'")
 
-    start_date_str = data_row[col["start_date"]].strip()
+    start_date_str = data_row[col["start_date"]]
     parsed_start = _parse_iso_date(start_date_str, "start_date", 2)
 
-    end_date_str = data_row[col["end_date"]].strip()
+    end_date_str = data_row[col["end_date"]]
     parsed_end = _parse_iso_date(end_date_str, "end_date", 2)
 
     if parsed_start > parsed_end:

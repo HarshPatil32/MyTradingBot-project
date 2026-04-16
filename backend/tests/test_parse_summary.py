@@ -218,3 +218,17 @@ class TestParseSummaryIntegration:
         bad_csv = "initial_capital,final_balance,num_trades,win_rate,start_date,end_date\n10000,12000,42,1.5,2024-01-01,2024-12-31\n"
         with pytest.raises(ValueError, match="win_rate"):
             analyze_uploaded_backtest(bad_csv)
+
+
+class TestParseSummaryWhitespaceCells:
+    def test_whitespace_padded_data_cells_parsed(self):
+        csv_data = (
+            "initial_capital,final_balance,num_trades,win_rate,start_date,end_date\n"
+            "  10000  ,  12000  ,  42  ,  0.6  ,  2024-01-01  ,  2024-12-31  \n"
+        )
+        result = parse_summary(csv_data)
+        assert result["initial_capital"] == 10000.0
+        assert result["num_trades"] == 42
+        assert result["win_rate"] == 0.6
+        assert result["start_date"] == "2024-01-01"
+        assert result["end_date"] == "2024-12-31"

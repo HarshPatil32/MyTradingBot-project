@@ -213,3 +213,15 @@ class TestParseDetailedFreeTierLimit:
         trailing_blanks = ",,,,\n,,,,\n"
         result = parse_detailed(header + rows + trailing_blanks)
         assert len(result) == FREE_TIER_TRADE_LIMIT
+
+
+class TestParseDetailedWhitespaceCells:
+    def test_whitespace_padded_data_cells_parsed(self):
+        csv_data = "date,symbol,action,price,shares\n  2024-01-15  ,  AAPL  ,  BUY  ,  185.50  ,  10  \n"
+        result = parse_detailed(csv_data)
+        assert len(result) == 1
+        assert result[0]["date"] == "2024-01-15"
+        assert result[0]["symbol"] == "AAPL"
+        assert result[0]["action"] == "BUY"
+        assert result[0]["price"] == 185.50
+        assert result[0]["shares"] == 10.0
