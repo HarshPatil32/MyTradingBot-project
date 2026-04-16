@@ -67,6 +67,18 @@ def _parse_positive_float(value: str, field: str, row_num: int) -> float:
     return result
 
 
+def _parse_iso_date(value: str, field: str, row_num: int) -> datetime:
+    """Parse a strict YYYY-MM-DD date string, raising ValueError with a clear message."""
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError(f"Row {row_num}: invalid {field} '{value}', expected YYYY-MM-DD")
+    # strptime accepts non-zero-padded dates like '2024-1-5'; the round-trip check catches them
+    if parsed.strftime("%Y-%m-%d") != value:
+        raise ValueError(f"Row {row_num}: invalid {field} '{value}', expected YYYY-MM-DD")
+    return parsed
+
+
 def _assert_content_safe(csv_data: str) -> None:
     """Raise ValueError if csv_data looks like a binary file or contains formula injection."""
     raw = csv_data.encode("utf-8", errors="replace")
@@ -174,13 +186,7 @@ def parse_detailed(csv_data: str) -> list[dict]:
             )
 
         date_val = raw_row[col["date"]].strip()
-        try:
-            parsed_date = datetime.strptime(date_val, "%Y-%m-%d")
-        except ValueError:
-            raise ValueError(f"Row {row_num}: invalid date '{date_val}', expected YYYY-MM-DD")
-        # Enforce strict zero-padded format (strptime accepts '2024-1-5' without this check)
-        if parsed_date.strftime("%Y-%m-%d") != date_val:
-            raise ValueError(f"Row {row_num}: invalid date '{date_val}', expected YYYY-MM-DD")
+        _parse_iso_date(date_val, "date", row_num)  # validation only; date stored as string
 
         symbol_val = raw_row[col["symbol"]].strip().upper()
         if not symbol_val:
@@ -206,7 +212,74 @@ def parse_detailed(csv_data: str) -> list[dict]:
 
 def parse_summary(csv_data: str) -> dict:
     """Parse a summary-format CSV into a single dict of aggregate metrics."""
-    pass
+    reader = csv.DictReader(io.StringIO(csv_data))
+
+    if reader.fieldnames is None:
+        raise ValueError("CSV is empty or has no header row")
+
+    norm_to_original: dict[str, str] = {f.strip().lower(): f for f in reader.fieldnames}
+
+    missing = REQUIRED_SUMMARY_KEYS - norm_to_original.keys()
+    if missing:
+        raise ValueError(f"CSV missing required fields: {sorted(missing)}")
+
+    col = {norm: norm_to_original[norm] for norm in REQUIRED_SUMMARY_KEYS}
+
+    data_row: dict | None = None
+    for raw_row in reader:
+        if all(v is None or v.strip() == "" for v in raw_row.values()):
+            continue
+        if data_row is not None:
+            raise ValueError("Summary CSV must contain exactly one data row")
+        data_row = raw_row
+
+    if data_row is None:
+        raise ValueError("CSV has no data rows")
+
+    initial_capital = _parse_positive_float(
+        data_row[col["initial_capital"]].strip(), "initial_capital", 2
+    )
+    final_balance = _parse_positive_float(
+        data_row[col["final_balance"]].strip(), "final_balance", 2
+    )
+
+    num_trades_str = data_row[col["num_trades"]].strip()
+    try:
+        num_trades_f = float(num_trades_str)
+    except ValueError:
+        raise ValueError(f"Row 2: num_trades '{num_trades_str}' is not a number")
+    if math.isnan(num_trades_f) or math.isinf(num_trades_f) or num_trades_f <= 0 or num_trades_f % 1 != 0:
+        raise ValueError(f"Row 2: num_trades must be a positive integer, got '{num_trades_str}'")
+    num_trades = int(num_trades_f)
+
+    win_rate_str = data_row[col["win_rate"]].strip()
+    try:
+        win_rate = float(win_rate_str)
+    except ValueError:
+        raise ValueError(f"Row 2: win_rate '{win_rate_str}' is not a number")
+    # expects a decimal fraction, e.g. 0.65 not 65
+    if math.isnan(win_rate) or math.isinf(win_rate) or win_rate < 0.0 or win_rate > 1.0:
+        raise ValueError(f"Row 2: win_rate must be between 0 and 1, got '{win_rate_str}'")
+
+    start_date_str = data_row[col["start_date"]].strip()
+    parsed_start = _parse_iso_date(start_date_str, "start_date", 2)
+
+    end_date_str = data_row[col["end_date"]].strip()
+    parsed_end = _parse_iso_date(end_date_str, "end_date", 2)
+
+    if parsed_start > parsed_end:
+        raise ValueError(
+            f"Row 2: start_date '{start_date_str}' must not be after end_date '{end_date_str}'"
+        )
+
+    return {
+        "initial_capital": initial_capital,
+        "final_balance": final_balance,
+        "num_trades": num_trades,
+        "win_rate": win_rate,
+        "start_date": start_date_str,
+        "end_date": end_date_str,
+    }
 
 
 def validate_trades(trades: list[dict]) -> list[dict]:
@@ -224,4 +297,7 @@ def analyze_uploaded_backtest(csv_data: str) -> dict:
     clean = sanitize_csv(csv_data)
     # All downstream calls (detect_format, parse_detailed, etc.) must use `clean`, not `csv_data`
     fmt = detect_format(clean)
+    if fmt == "summary":
+        summary = parse_summary(clean)
+        return {"format": fmt, "summary": summary}
     return {"format": fmt}
