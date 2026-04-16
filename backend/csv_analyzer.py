@@ -100,8 +100,36 @@ def sanitize_csv(csv_data: str) -> str:
 
 
 def detect_format(csv_data: str) -> str:
-    """Return 'detailed' or 'summary' based on the CSV header columns."""
-    pass
+    """Return 'detailed' or 'summary' based on the CSV header columns.
+
+    Expects data that has already been through sanitize_csv().
+    Raises ValueError if the header matches neither known format.
+    'detailed' is checked first; a file satisfying both formats is treated as 'detailed'.
+    """
+    reader = csv.reader(io.StringIO(csv_data))
+    try:
+        header_row = next(reader)
+    except StopIteration:
+        raise ValueError("CSV is empty or has no header row")
+
+    actual_cols: frozenset[str] = frozenset(col.strip().lower() for col in header_row if col.strip())
+
+    if not actual_cols:
+        raise ValueError("CSV is empty or has no header row")
+
+    if REQUIRED_DETAILED_COLUMNS <= actual_cols:
+        return "detailed"
+
+    if REQUIRED_SUMMARY_KEYS <= actual_cols:
+        return "summary"
+
+    missing_detailed = REQUIRED_DETAILED_COLUMNS - actual_cols
+    missing_summary = REQUIRED_SUMMARY_KEYS - actual_cols
+    raise ValueError(
+        f"CSV columns do not match any known format. "
+        f"For detailed format, missing: {sorted(missing_detailed)}. "
+        f"For summary format, missing: {sorted(missing_summary)}."
+    )
 
 
 def parse_detailed(csv_data: str) -> list[dict]:
@@ -128,4 +156,5 @@ def analyze_uploaded_backtest(csv_data: str) -> dict:
     """Main entry point: sanitize, detect format, parse, validate, and return a normalised trade dict."""
     clean = sanitize_csv(csv_data)
     # All downstream calls (detect_format, parse_detailed, etc.) must use `clean`, not `csv_data`
-    return {}
+    fmt = detect_format(clean)
+    return {"format": fmt}
