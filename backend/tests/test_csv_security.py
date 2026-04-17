@@ -103,6 +103,19 @@ class TestSanitizeCsvSafetyGate:
         assert ";" not in result
         assert "date,symbol" in result
 
+    def test_bom_strips_exactly_one(self):
+        # Two consecutive BOMs: only the leading one should be removed
+        result = sanitize_csv("\ufeff\ufeffdate,symbol\n2024-01-01,AAPL")
+        assert result.startswith("\ufeff")
+        assert not result.startswith("\ufeff\ufeff")
+
+    def test_semicolon_with_quoted_comma_field_preserved(self):
+        # A field value that contains a comma inside quotes must survive delimiter conversion
+        raw = 'date;symbol;notes\n2024-01-01;AAPL;"buy, initial entry"'
+        result = sanitize_csv(raw)
+        assert "buy, initial entry" in result
+        assert ";" not in result
+
 
 # ---------------------------------------------------------------------------
 # _safe_filename — filename sanitization

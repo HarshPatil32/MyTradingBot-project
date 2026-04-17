@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import math
 import statistics
 from datetime import datetime
 from typing import Any, Sequence
@@ -55,12 +56,35 @@ def _is_numeric_cell(value: str) -> bool:
         return False
 
 
+def _parse_positive_float(value: str, field: str, row_num: int) -> float:
+    """Parse a string as a positive finite float, raising ValueError with a clear message."""
+    try:
+        result = float(value)
+    except ValueError:
+        raise ValueError(f"Row {row_num}: {field} '{value}' is not a number")
+    if math.isnan(result) or math.isinf(result) or result <= 0:
+        raise ValueError(f"Row {row_num}: {field} must be positive, got '{value}'")
+    return result
+
+
+def _parse_iso_date(value: str, field: str, row_num: int) -> datetime:
+    """Parse a strict YYYY-MM-DD date string, raising ValueError with a clear message."""
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError(f"Row {row_num}: invalid {field} '{value}', expected YYYY-MM-DD")
+    # strptime accepts non-zero-padded dates like '2024-1-5'; the round-trip check catches them
+    if parsed.strftime("%Y-%m-%d") != value:
+        raise ValueError(f"Row {row_num}: invalid {field} '{value}', expected YYYY-MM-DD")
+    return parsed
+
+
 def _assert_content_safe(csv_data: str) -> None:
     """Raise ValueError if csv_data looks like a binary file or contains formula injection."""
     raw = csv_data.encode("utf-8", errors="replace")
 
     # Strip UTF-8 BOM before magic check so it cannot hide binary signatures
-    check_raw = raw.lstrip(b"\xef\xbb\xbf")
+    check_raw = raw[3:] if raw.startswith(b"\xef\xbb\xbf") else raw
 
     for magic in _BINARY_MAGIC:
         if check_raw.startswith(magic):
@@ -81,37 +105,206 @@ def _assert_content_safe(csv_data: str) -> None:
                 raise ValueError("CSV contains a potentially unsafe cell value")
 
 
+def _convert_semicolon_to_comma(csv_data: str) -> str:
+    """Re-serialize a semicolon-delimited CSV as comma-delimited, preserving quoted fields."""
+    out = io.StringIO()
+    writer = csv.writer(out)
+    for row in csv.reader(io.StringIO(csv_data), delimiter=";"):
+        writer.writerow(row)
+    return out.getvalue()
+
+
+def _strip_row(row: dict) -> dict:
+    # csv.DictReader can produce None for columns beyond the header width; skip those
+    return {k: (v.strip() if isinstance(v, str) else v) for k, v in row.items()}
+
+
 # ---------------------------------------------------------------------------
 # Public functions
 # ---------------------------------------------------------------------------
 
+
 def sanitize_csv(csv_data: str) -> str:
     """Strip BOM, normalise line endings, and convert semicolon delimiters to commas."""
     _assert_content_safe(csv_data)
-    # Remove UTF-8 BOM if present
-    csv_data = csv_data.lstrip("\ufeff")
+    # Remove exactly one UTF-8 BOM if present
+    if csv_data.startswith("\ufeff"):
+        csv_data = csv_data[1:]
     # Normalise line endings to \n
     csv_data = csv_data.replace("\r\n", "\n").replace("\r", "\n")
-    # Convert semicolon-delimited files to comma-delimited
-    first_line = csv_data.split("\n")[0]
-    if ";" in first_line and "," not in first_line:
-        csv_data = csv_data.replace(";", ",")
+    # Detect delimiter and convert semicolon-delimited files to comma-delimited
+    first_non_empty = next((l for l in csv_data.split("\n") if l.strip()), "")
+    try:
+        dialect = csv.Sniffer().sniff(first_non_empty, delimiters=",;")
+        logger.debug("CSV delimiter detected: %r", dialect.delimiter)
+        if dialect.delimiter == ";":
+            csv_data = _convert_semicolon_to_comma(csv_data)
+    except csv.Error:
+        # Sniffer can't decide (e.g. single-column file) — fall back to heuristic
+        if ";" in first_non_empty and "," not in first_non_empty:
+            csv_data = _convert_semicolon_to_comma(csv_data)
     return csv_data
 
 
 def detect_format(csv_data: str) -> str:
-    """Return 'detailed' or 'summary' based on the CSV header columns."""
-    pass
+    """Return 'detailed' or 'summary' based on the CSV header columns.
+
+    Expects data that has already been through sanitize_csv().
+    Raises ValueError if the header matches neither known format.
+    'detailed' is checked first; a file satisfying both formats is treated as 'detailed'.
+    """
+    reader = csv.reader(io.StringIO(csv_data))
+    try:
+        header_row = next(reader)
+    except StopIteration:
+        raise ValueError("CSV is empty or has no header row")
+
+    actual_cols: frozenset[str] = frozenset(col.strip().lower() for col in header_row if col.strip())
+
+    if not actual_cols:
+        raise ValueError("CSV is empty or has no header row")
+
+    if REQUIRED_DETAILED_COLUMNS <= actual_cols:
+        return "detailed"
+
+    if REQUIRED_SUMMARY_KEYS <= actual_cols:
+        return "summary"
+
+    missing_detailed = REQUIRED_DETAILED_COLUMNS - actual_cols
+    missing_summary = REQUIRED_SUMMARY_KEYS - actual_cols
+    raise ValueError(
+        f"CSV columns do not match any known format. "
+        f"For detailed format, missing: {sorted(missing_detailed)}. "
+        f"For summary format, missing: {sorted(missing_summary)}."
+    )
 
 
 def parse_detailed(csv_data: str) -> list[dict]:
     """Parse a detailed trade-list CSV into a list of typed trade dicts."""
-    pass
+    reader = csv.DictReader(io.StringIO(csv_data))
+
+    if reader.fieldnames is None:
+        raise ValueError("CSV is empty or has no header row")
+
+    # Build normalized (lowercase, stripped) -> original fieldname mapping
+    norm_to_original: dict[str, str] = {f.strip().lower(): f for f in reader.fieldnames}
+
+    missing = REQUIRED_DETAILED_COLUMNS - norm_to_original.keys()
+    if missing:
+        raise ValueError(f"CSV missing required columns: {sorted(missing)}")
+
+    # Access each required column by its original (un-normalized) fieldname
+    col = {norm: norm_to_original[norm] for norm in REQUIRED_DETAILED_COLUMNS}
+
+    trades: list[dict] = []
+    for row_num, raw_row in enumerate(reader, start=2):
+        # Skip entirely blank rows before checking the limit
+        if all(v is None or v.strip() == "" for v in raw_row.values()):
+            continue
+
+        # Enforce limit on non-blank rows only
+        if len(trades) >= FREE_TIER_TRADE_LIMIT:
+            raise ValueError(
+                f"Trade count exceeds the free tier limit of {FREE_TIER_TRADE_LIMIT}"
+            )
+
+        raw_row = _strip_row(raw_row)
+
+        date_val = raw_row[col["date"]]
+        _parse_iso_date(date_val, "date", row_num)  # validation only; date stored as string
+
+        symbol_val = raw_row[col["symbol"]].upper()
+        if not symbol_val:
+            raise ValueError(f"Row {row_num}: symbol is blank")
+
+        action_val = raw_row[col["action"]].upper()
+        if action_val not in {"BUY", "SELL"}:
+            raise ValueError(f"Row {row_num}: action '{action_val}' is not BUY or SELL")
+
+        price_val = _parse_positive_float(raw_row[col["price"]], "price", row_num)
+        shares_val = _parse_positive_float(raw_row[col["shares"]], "shares", row_num)
+
+        trades.append({
+            "date": date_val,
+            "symbol": symbol_val,
+            "action": action_val,
+            "price": price_val,
+            "shares": shares_val,
+        })
+
+    return trades
 
 
 def parse_summary(csv_data: str) -> dict:
     """Parse a summary-format CSV into a single dict of aggregate metrics."""
-    pass
+    reader = csv.DictReader(io.StringIO(csv_data))
+
+    if reader.fieldnames is None:
+        raise ValueError("CSV is empty or has no header row")
+
+    norm_to_original: dict[str, str] = {f.strip().lower(): f for f in reader.fieldnames}
+
+    missing = REQUIRED_SUMMARY_KEYS - norm_to_original.keys()
+    if missing:
+        raise ValueError(f"CSV missing required fields: {sorted(missing)}")
+
+    col = {norm: norm_to_original[norm] for norm in REQUIRED_SUMMARY_KEYS}
+
+    data_row: dict | None = None
+    for raw_row in reader:
+        if all(v is None or v.strip() == "" for v in raw_row.values()):
+            continue
+        if data_row is not None:
+            raise ValueError("Summary CSV must contain exactly one data row")
+        data_row = _strip_row(raw_row)
+
+    if data_row is None:
+        raise ValueError("CSV has no data rows")
+
+    initial_capital = _parse_positive_float(
+        data_row[col["initial_capital"]], "initial_capital", 2
+    )
+    final_balance = _parse_positive_float(
+        data_row[col["final_balance"]], "final_balance", 2
+    )
+
+    num_trades_str = data_row[col["num_trades"]]
+    try:
+        num_trades_f = float(num_trades_str)
+    except ValueError:
+        raise ValueError(f"Row 2: num_trades '{num_trades_str}' is not a number")
+    if math.isnan(num_trades_f) or math.isinf(num_trades_f) or num_trades_f <= 0 or num_trades_f % 1 != 0:
+        raise ValueError(f"Row 2: num_trades must be a positive integer, got '{num_trades_str}'")
+    num_trades = int(num_trades_f)
+
+    win_rate_str = data_row[col["win_rate"]]
+    try:
+        win_rate = float(win_rate_str)
+    except ValueError:
+        raise ValueError(f"Row 2: win_rate '{win_rate_str}' is not a number")
+    # expects a decimal fraction, e.g. 0.65 not 65
+    if math.isnan(win_rate) or math.isinf(win_rate) or win_rate < 0.0 or win_rate > 1.0:
+        raise ValueError(f"Row 2: win_rate must be between 0 and 1, got '{win_rate_str}'")
+
+    start_date_str = data_row[col["start_date"]]
+    parsed_start = _parse_iso_date(start_date_str, "start_date", 2)
+
+    end_date_str = data_row[col["end_date"]]
+    parsed_end = _parse_iso_date(end_date_str, "end_date", 2)
+
+    if parsed_start > parsed_end:
+        raise ValueError(
+            f"Row 2: start_date '{start_date_str}' must not be after end_date '{end_date_str}'"
+        )
+
+    return {
+        "initial_capital": initial_capital,
+        "final_balance": final_balance,
+        "num_trades": num_trades,
+        "win_rate": win_rate,
+        "start_date": start_date_str,
+        "end_date": end_date_str,
+    }
 
 
 def validate_trades(trades: list[dict]) -> list[dict]:
@@ -128,4 +321,8 @@ def analyze_uploaded_backtest(csv_data: str) -> dict:
     """Main entry point: sanitize, detect format, parse, validate, and return a normalised trade dict."""
     clean = sanitize_csv(csv_data)
     # All downstream calls (detect_format, parse_detailed, etc.) must use `clean`, not `csv_data`
-    return {}
+    fmt = detect_format(clean)
+    if fmt == "summary":
+        summary = parse_summary(clean)
+        return {"format": fmt, "summary": summary}
+    return {"format": fmt}
