@@ -34,9 +34,13 @@ REQUIRED_SUMMARY_KEYS: frozenset[str] = frozenset(
 
 # Binary file magic bytes that should never appear in a CSV
 _BINARY_MAGIC: tuple[bytes, ...] = (
-    b"MZ",       # Windows PE/EXE
-    b"\x7fELF",  # Linux ELF
-    b"#!",       # Shell/script shebang
+    b"MZ",           # Windows PE/EXE
+    b"\x7fELF",      # Linux ELF
+    b"#!",           # Shell/script shebang
+    b"%PDF",         # PDF
+    b"PK\x03\x04",   # ZIP / XLSX / DOCX
+    b"\x89PNG",      # PNG image
+    b"\x1f\x8b",     # GZIP archive
 )
 
 # Characters that trigger formula execution in spreadsheet tools (CSV injection)
@@ -81,21 +85,25 @@ def _parse_iso_date(value: str, field: str, row_num: int) -> datetime:
 
 def _assert_content_safe(csv_data: str) -> None:
     """Raise ValueError if csv_data looks like a binary file or contains formula injection."""
-    raw = csv_data.encode("utf-8", errors="replace")
-
-    # Strip UTF-8 BOM before magic check so it cannot hide binary signatures
-    check_raw = raw[3:] if raw.startswith(b"\xef\xbb\xbf") else raw
+    # Strip BOM at string level before encoding so it cannot hide binary signatures.
+    # Use latin-1 (not utf-8) so each character maps to exactly one byte, preserving
+    # extended-ASCII magic bytes like 0x89 (PNG) and 0x8b (GZIP) that would become
+    # two-byte sequences in utf-8.
+    check_str = csv_data[1:] if csv_data.startswith("\ufeff") else csv_data
+    check_raw = check_str.encode("latin-1", errors="replace")
 
     for magic in _BINARY_MAGIC:
         if check_raw.startswith(magic):
             raise ValueError("CSV content appears to be a binary file, not a CSV")
 
+    raw = csv_data.encode("utf-8", errors="replace")
     if b"\x00" in raw:
         raise ValueError("CSV content contains null bytes")
 
     # Check every cell for formula injection.
     # Numeric cells (including negative numbers and scientific notation) are safe.
-    reader = csv.reader(io.StringIO(csv_data))
+    normalized = csv_data.replace("\r\n", "\n").replace("\r", "\n")
+    reader = csv.reader(io.StringIO(normalized))
     for row in reader:
         for cell in row:
             stripped = cell.strip()
@@ -308,13 +316,107 @@ def parse_summary(csv_data: str) -> dict:
 
 
 def validate_trades(trades: list[dict]) -> list[dict]:
-    """Check trades for pairing errors, duplicates, and invalid values; return a list of warning dicts."""
-    pass
+    """Check trades for pairing errors and duplicates; return a list of warning dicts.
+
+    Warnings (not exceptions) are returned so callers can still show results while
+    surfacing data quality issues to the user.
+    """
+    warnings: list[dict] = []
+
+    # Detect duplicate rows: same date + symbol + action + price + shares
+    seen: set[tuple] = set()
+    for trade in trades:
+        key = (trade["date"], trade["symbol"], trade["action"], trade["price"], trade["shares"])
+        if key in seen:
+            warnings.append({
+                "type": "duplicate",
+                "message": (
+                    f"Duplicate trade: {trade['action']} {trade['shares']} "
+                    f"{trade['symbol']} @ {trade['price']} on {trade['date']}"
+                ),
+            })
+        else:
+            seen.add(key)
+
+    # Check BUY/SELL pairing per symbol using a simple FIFO stack
+    open_buys: dict[str, list[dict]] = {}
+    for trade in trades:
+        symbol = trade["symbol"]
+        if trade["action"] == "BUY":
+            open_buys.setdefault(symbol, []).append(trade)
+        elif trade["action"] == "SELL":
+            if not open_buys.get(symbol):
+                warnings.append({
+                    "type": "unmatched_sell",
+                    "message": f"SELL for {symbol} on {trade['date']} has no preceding BUY",
+                })
+            else:
+                open_buys[symbol].pop(0)
+
+    for symbol, buys in open_buys.items():
+        for buy in buys:
+            warnings.append({
+                "type": "unclosed_position",
+                "message": f"BUY for {symbol} on {buy['date']} has no matching SELL",
+            })
+
+    return warnings
 
 
 def calculate_pnl(trades: list[dict]) -> dict:
-    """Compute per-trade P&L, equity curve, and total return from a paired trade list."""
-    pass
+    """Compute per-trade P&L, equity curve, and total return from a trade list.
+
+    Pairs BUY→SELL trades per symbol using FIFO matching. Unpaired trades are skipped.
+    Returns a dict with keys: trade_pnl, equity_curve, total_pnl, total_return_pct.
+    """
+    # FIFO buy queues per symbol: stores (date, price, shares) for each open BUY
+    open_buys: dict[str, list[dict]] = {}
+    trade_pnl: list[dict] = []
+    cumulative_pnl = 0.0
+
+    for trade in trades:
+        symbol = trade["symbol"]
+        if trade["action"] == "BUY":
+            open_buys.setdefault(symbol, []).append(trade)
+        elif trade["action"] == "SELL":
+            if not open_buys.get(symbol):
+                continue  # unmatched sell — already flagged by validate_trades
+            buy = open_buys[symbol].pop(0)
+            pnl = (trade["price"] - buy["price"]) * trade["shares"]
+            cumulative_pnl += pnl
+            trade_pnl.append({
+                "buy_date": buy["date"],
+                "sell_date": trade["date"],
+                "symbol": symbol,
+                "shares": trade["shares"],
+                "buy_price": buy["price"],
+                "sell_price": trade["price"],
+                "pnl": round(pnl, 4),
+                "cumulative_pnl": round(cumulative_pnl, 4),
+            })
+
+    # Equity curve: cumulative P&L at each sell event (chronological order)
+    equity_curve = [
+        {"date": t["sell_date"], "cumulative_pnl": t["cumulative_pnl"]}
+        for t in trade_pnl
+    ]
+
+    # Total return as a percentage of total capital deployed (sum of all buy costs)
+    total_buy_cost = sum(
+        t["buy_price"] * t["shares"] for t in trade_pnl
+    )
+    total_return_pct = (
+        round((cumulative_pnl / total_buy_cost) * 100, 4)
+        if total_buy_cost > 0
+        else 0.0
+    )
+
+    return {
+        "trade_pnl": trade_pnl,
+        "equity_curve": equity_curve,
+        "total_pnl": round(cumulative_pnl, 4),
+        "total_return_pct": total_return_pct,
+    }
 
 
 def analyze_uploaded_backtest(csv_data: str) -> dict:
@@ -325,4 +427,8 @@ def analyze_uploaded_backtest(csv_data: str) -> dict:
     if fmt == "summary":
         summary = parse_summary(clean)
         return {"format": fmt, "summary": summary}
-    return {"format": fmt}
+
+    trades = parse_detailed(clean)
+    warnings = validate_trades(trades)
+    pnl = calculate_pnl(trades)
+    return {"format": fmt, "trades": trades, "warnings": warnings, "pnl": pnl}

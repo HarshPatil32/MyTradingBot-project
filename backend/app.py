@@ -536,7 +536,12 @@ def analyze_backtest():
             except ValueError:
                 return jsonify({"error": "Invalid filename."}), 400
             raw_bytes = upload.read()
-            csv_data = raw_bytes.decode("utf-8", errors="replace")
+            try:
+                csv_data = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                # latin-1 is a 1:1 byte mapping so it never fails and preserves
+                # magic byte patterns needed by the binary-file safety check
+                csv_data = raw_bytes.decode("latin-1")
         elif request.is_json:
             body = request.get_json(silent=True) or {}
             csv_data = body.get("csv_data", "")
