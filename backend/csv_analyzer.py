@@ -12,17 +12,23 @@ import csv
 import io
 import logging
 import math
+import re
 import statistics
 from datetime import datetime
 from typing import Any, Sequence
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
-# Constants
+# Constants and Exceptions
 # ---------------------------------------------------------------------------
 
 FREE_TIER_TRADE_LIMIT = 100
+
+class FreeTierLimitExceeded(ValueError):
+    """Raised when the free tier trade limit is exceeded."""
+    pass
 
 REQUIRED_DETAILED_COLUMNS: frozenset[str] = frozenset(
     {"date", "symbol", "action", "price", "shares"}
@@ -34,13 +40,20 @@ REQUIRED_SUMMARY_KEYS: frozenset[str] = frozenset(
 
 # Binary file magic bytes that should never appear in a CSV
 _BINARY_MAGIC: tuple[bytes, ...] = (
-    b"MZ",       # Windows PE/EXE
-    b"\x7fELF",  # Linux ELF
-    b"#!",       # Shell/script shebang
+    b"MZ",           # Windows PE/EXE
+    b"\x7fELF",      # Linux ELF
+    b"#!",           # Shell/script shebang
+    b"%PDF",         # PDF
+    b"PK\x03\x04",   # ZIP / XLSX / DOCX
+    b"\x89PNG",      # PNG image
+    b"\x1f\x8b",     # GZIP archive
 )
 
 # Characters that trigger formula execution in spreadsheet tools (CSV injection)
 _FORMULA_CHARS: frozenset[str] = frozenset({"=", "+", "@"})
+
+# Valid ticker: uppercase letters, digits, dots, hyphens; 1-20 chars total
+_SYMBOL_RE = re.compile(r"^[A-Z0-9]([A-Z0-9.\-]{0,19})?$")
 
 
 # ---------------------------------------------------------------------------
@@ -56,8 +69,15 @@ def _is_numeric_cell(value: str) -> bool:
         return False
 
 
-def _parse_positive_float(value: str, field: str, row_num: int) -> float:
+def _require_field(value: str | None, row_num: int, name: str) -> str:
+    if value is None or not str(value).strip():
+        raise ValueError(f"Row {row_num}: {name} is blank")
+    return str(value).strip()
+
+
+def _parse_positive_float(value: str | None, field: str, row_num: int) -> float:
     """Parse a string as a positive finite float, raising ValueError with a clear message."""
+    value = _require_field(value, row_num, field)
     try:
         result = float(value)
     except ValueError:
@@ -67,13 +87,13 @@ def _parse_positive_float(value: str, field: str, row_num: int) -> float:
     return result
 
 
-def _parse_iso_date(value: str, field: str, row_num: int) -> datetime:
+def _parse_iso_date(value: str | None, field: str, row_num: int) -> datetime:
     """Parse a strict YYYY-MM-DD date string, raising ValueError with a clear message."""
+    value = _require_field(value, row_num, field)
     try:
         parsed = datetime.strptime(value, "%Y-%m-%d")
     except ValueError:
         raise ValueError(f"Row {row_num}: invalid {field} '{value}', expected YYYY-MM-DD")
-    # strptime accepts non-zero-padded dates like '2024-1-5'; the round-trip check catches them
     if parsed.strftime("%Y-%m-%d") != value:
         raise ValueError(f"Row {row_num}: invalid {field} '{value}', expected YYYY-MM-DD")
     return parsed
@@ -81,21 +101,25 @@ def _parse_iso_date(value: str, field: str, row_num: int) -> datetime:
 
 def _assert_content_safe(csv_data: str) -> None:
     """Raise ValueError if csv_data looks like a binary file or contains formula injection."""
-    raw = csv_data.encode("utf-8", errors="replace")
-
-    # Strip UTF-8 BOM before magic check so it cannot hide binary signatures
-    check_raw = raw[3:] if raw.startswith(b"\xef\xbb\xbf") else raw
+    # Strip BOM at string level before encoding so it cannot hide binary signatures.
+    # Use latin-1 (not utf-8) so each character maps to exactly one byte, preserving
+    # extended-ASCII magic bytes like 0x89 (PNG) and 0x8b (GZIP) that would become
+    # two-byte sequences in utf-8.
+    check_str = csv_data[1:] if csv_data.startswith("\ufeff") else csv_data
+    check_raw = check_str.encode("latin-1", errors="replace")
 
     for magic in _BINARY_MAGIC:
         if check_raw.startswith(magic):
             raise ValueError("CSV content appears to be a binary file, not a CSV")
 
+    raw = csv_data.encode("utf-8", errors="replace")
     if b"\x00" in raw:
         raise ValueError("CSV content contains null bytes")
 
     # Check every cell for formula injection.
     # Numeric cells (including negative numbers and scientific notation) are safe.
-    reader = csv.reader(io.StringIO(csv_data))
+    normalized = csv_data.replace("\r\n", "\n").replace("\r", "\n")
+    reader = csv.reader(io.StringIO(normalized))
     for row in reader:
         for cell in row:
             stripped = cell.strip()
@@ -179,8 +203,10 @@ def detect_format(csv_data: str) -> str:
     )
 
 
-def parse_detailed(csv_data: str) -> list[dict]:
-    """Parse a detailed trade-list CSV into a list of typed trade dicts."""
+def parse_detailed(csv_data: str, is_free_tier: bool = True) -> list[dict]:
+    """Parse a detailed trade-list CSV into a list of typed trade dicts.
+    If is_free_tier is True, enforce the free tier trade limit.
+    """
     reader = csv.DictReader(io.StringIO(csv_data))
 
     if reader.fieldnames is None:
@@ -203,21 +229,27 @@ def parse_detailed(csv_data: str) -> list[dict]:
             continue
 
         # Enforce limit on non-blank rows only
-        if len(trades) >= FREE_TIER_TRADE_LIMIT:
-            raise ValueError(
+        if is_free_tier and len(trades) >= FREE_TIER_TRADE_LIMIT:
+            raise FreeTierLimitExceeded(
                 f"Trade count exceeds the free tier limit of {FREE_TIER_TRADE_LIMIT}"
             )
 
         raw_row = _strip_row(raw_row)
 
-        date_val = raw_row[col["date"]]
+        date_val = _require_field(raw_row[col["date"]], row_num, "date")
         _parse_iso_date(date_val, "date", row_num)  # validation only; date stored as string
 
-        symbol_val = raw_row[col["symbol"]].upper()
-        if not symbol_val:
-            raise ValueError(f"Row {row_num}: symbol is blank")
+        symbol_val = _require_field(raw_row[col["symbol"]], row_num, "symbol").upper()
+        # Disallow all-digit, trailing dot/hyphen, or any space
+        if (
+            not _SYMBOL_RE.match(symbol_val)
+            or symbol_val.isdigit()
+            or symbol_val.endswith(('.', '-'))
+            or ' ' in symbol_val
+        ):
+            raise ValueError(f"Row {row_num}: symbol '{symbol_val}' contains invalid characters")
 
-        action_val = raw_row[col["action"]].upper()
+        action_val = _require_field(raw_row[col["action"]], row_num, "action").upper()
         if action_val not in {"BUY", "SELL"}:
             raise ValueError(f"Row {row_num}: action '{action_val}' is not BUY or SELL")
 
@@ -236,18 +268,32 @@ def parse_detailed(csv_data: str) -> list[dict]:
 
 
 def parse_summary(csv_data: str) -> dict:
-    """Parse a summary-format CSV into a single dict of aggregate metrics."""
+    """
+    Parse a summary-format CSV into a single dict of aggregate metrics.
+
+    Expected columns (case/padding ignored):
+        - initial_capital (float > 0)
+        - final_balance (float > 0)
+        - num_trades (int > 0, accepts e.g. "42" or "42.0")
+        - win_rate (float in [0, 1])
+        - start_date (YYYY-MM-DD string)
+        - end_date (YYYY-MM-DD string)
+    Extra columns are ignored. Missing/typoed columns raise ValueError.
+    """
     reader = csv.DictReader(io.StringIO(csv_data))
 
     if reader.fieldnames is None:
         raise ValueError("CSV is empty or has no header row")
 
+    # Normalize headers and check for required columns
     norm_to_original: dict[str, str] = {f.strip().lower(): f for f in reader.fieldnames}
-
-    missing = REQUIRED_SUMMARY_KEYS - norm_to_original.keys()
+    actual_cols = set(norm_to_original.keys())
+    missing = REQUIRED_SUMMARY_KEYS - actual_cols
+    extra = actual_cols - REQUIRED_SUMMARY_KEYS
     if missing:
-        raise ValueError(f"CSV missing required fields: {sorted(missing)}")
+        raise ValueError(f"CSV missing required fields: {sorted(missing)}. Did you typo a column?")
 
+    # Map normalized required keys to original header
     col = {norm: norm_to_original[norm] for norm in REQUIRED_SUMMARY_KEYS}
 
     data_row: dict | None = None
@@ -268,12 +314,18 @@ def parse_summary(csv_data: str) -> dict:
         data_row[col["final_balance"]], "final_balance", 2
     )
 
+    # Accept num_trades as "42" or "42.0" (but not "42.5")
     num_trades_str = data_row[col["num_trades"]]
     try:
         num_trades_f = float(num_trades_str)
     except ValueError:
         raise ValueError(f"Row 2: num_trades '{num_trades_str}' is not a number")
-    if math.isnan(num_trades_f) or math.isinf(num_trades_f) or num_trades_f <= 0 or num_trades_f % 1 != 0:
+    if (
+        math.isnan(num_trades_f)
+        or math.isinf(num_trades_f)
+        or num_trades_f <= 0
+        or num_trades_f % 1 != 0
+    ):
         raise ValueError(f"Row 2: num_trades must be a positive integer, got '{num_trades_str}'")
     num_trades = int(num_trades_f)
 
@@ -297,6 +349,7 @@ def parse_summary(csv_data: str) -> dict:
             f"Row 2: start_date '{start_date_str}' must not be after end_date '{end_date_str}'"
         )
 
+    # Extra columns are ignored, but could be logged if needed
     return {
         "initial_capital": initial_capital,
         "final_balance": final_balance,
@@ -308,13 +361,107 @@ def parse_summary(csv_data: str) -> dict:
 
 
 def validate_trades(trades: list[dict]) -> list[dict]:
-    """Check trades for pairing errors, duplicates, and invalid values; return a list of warning dicts."""
-    pass
+    """Check trades for pairing errors and duplicates; return a list of warning dicts.
+
+    Warnings (not exceptions) are returned so callers can still show results while
+    surfacing data quality issues to the user.
+    """
+    warnings: list[dict] = []
+
+    # Detect duplicate rows: same date + symbol + action + price + shares
+    seen: set[tuple] = set()
+    for trade in trades:
+        key = (trade["date"], trade["symbol"], trade["action"], trade["price"], trade["shares"])
+        if key in seen:
+            warnings.append({
+                "type": "duplicate",
+                "message": (
+                    f"Duplicate trade: {trade['action']} {trade['shares']} "
+                    f"{trade['symbol']} @ {trade['price']} on {trade['date']}"
+                ),
+            })
+        else:
+            seen.add(key)
+
+    # Check BUY/SELL pairing per symbol using a simple FIFO stack
+    open_buys: dict[str, list[dict]] = {}
+    for trade in trades:
+        symbol = trade["symbol"]
+        if trade["action"] == "BUY":
+            open_buys.setdefault(symbol, []).append(trade)
+        elif trade["action"] == "SELL":
+            if not open_buys.get(symbol):
+                warnings.append({
+                    "type": "unmatched_sell",
+                    "message": f"SELL for {symbol} on {trade['date']} has no preceding BUY",
+                })
+            else:
+                open_buys[symbol].pop(0)
+
+    for symbol, buys in open_buys.items():
+        for buy in buys:
+            warnings.append({
+                "type": "unclosed_position",
+                "message": f"BUY for {symbol} on {buy['date']} has no matching SELL",
+            })
+
+    return warnings
 
 
 def calculate_pnl(trades: list[dict]) -> dict:
-    """Compute per-trade P&L, equity curve, and total return from a paired trade list."""
-    pass
+    """Compute per-trade P&L, equity curve, and total return from a trade list.
+
+    Pairs BUY→SELL trades per symbol using FIFO matching. Unpaired trades are skipped.
+    Returns a dict with keys: trade_pnl, equity_curve, total_pnl, total_return_pct.
+    """
+    # FIFO buy queues per symbol: stores (date, price, shares) for each open BUY
+    open_buys: dict[str, list[dict]] = {}
+    trade_pnl: list[dict] = []
+    cumulative_pnl = 0.0
+
+    for trade in trades:
+        symbol = trade["symbol"]
+        if trade["action"] == "BUY":
+            open_buys.setdefault(symbol, []).append(trade)
+        elif trade["action"] == "SELL":
+            if not open_buys.get(symbol):
+                continue  # unmatched sell — already flagged by validate_trades
+            buy = open_buys[symbol].pop(0)
+            pnl = (trade["price"] - buy["price"]) * trade["shares"]
+            cumulative_pnl += pnl
+            trade_pnl.append({
+                "buy_date": buy["date"],
+                "sell_date": trade["date"],
+                "symbol": symbol,
+                "shares": trade["shares"],
+                "buy_price": buy["price"],
+                "sell_price": trade["price"],
+                "pnl": round(pnl, 4),
+                "cumulative_pnl": round(cumulative_pnl, 4),
+            })
+
+    # Equity curve: cumulative P&L at each sell event (chronological order)
+    equity_curve = [
+        {"date": t["sell_date"], "cumulative_pnl": t["cumulative_pnl"]}
+        for t in trade_pnl
+    ]
+
+    # Total return as a percentage of total capital deployed (sum of all buy costs)
+    total_buy_cost = sum(
+        t["buy_price"] * t["shares"] for t in trade_pnl
+    )
+    total_return_pct = (
+        round((cumulative_pnl / total_buy_cost) * 100, 4)
+        if total_buy_cost > 0
+        else 0.0
+    )
+
+    return {
+        "trade_pnl": trade_pnl,
+        "equity_curve": equity_curve,
+        "total_pnl": round(cumulative_pnl, 4),
+        "total_return_pct": total_return_pct,
+    }
 
 
 def analyze_uploaded_backtest(csv_data: str) -> dict:
@@ -325,4 +472,8 @@ def analyze_uploaded_backtest(csv_data: str) -> dict:
     if fmt == "summary":
         summary = parse_summary(clean)
         return {"format": fmt, "summary": summary}
-    return {"format": fmt}
+
+    trades = parse_detailed(clean)
+    warnings = validate_trades(trades)
+    pnl = calculate_pnl(trades)
+    return {"format": fmt, "trades": trades, "warnings": warnings, "pnl": pnl}

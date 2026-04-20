@@ -71,6 +71,22 @@ class TestAssertContentSafe:
     def test_empty_string_passes(self):
         _assert_content_safe("")
 
+    def test_pdf_magic_bytes_raises(self):
+        with pytest.raises(ValueError, match="binary file"):
+            _assert_content_safe("%PDF-1.4 fake pdf content")
+
+    def test_zip_magic_bytes_raises(self):
+        with pytest.raises(ValueError, match="binary file"):
+            _assert_content_safe("PK\x03\x04fake zip content")
+
+    def test_png_magic_bytes_raises(self):
+        with pytest.raises(ValueError, match="binary file"):
+            _assert_content_safe("\x89PNGfake png content")
+
+    def test_gzip_magic_bytes_raises(self):
+        with pytest.raises(ValueError, match="binary file"):
+            _assert_content_safe("\x1f\x8bfake gzip content")
+
 
 # ---------------------------------------------------------------------------
 # sanitize_csv — safety gate is called first, and return value is correct
@@ -96,6 +112,11 @@ class TestSanitizeCsvSafetyGate:
 
     def test_crlf_normalised(self):
         result = sanitize_csv("date,symbol\r\n2024-01-01,AAPL\r\n")
+        assert "\r" not in result
+
+    def test_cr_only_normalised(self):
+        # Old Mac line endings (\r only) must also be converted to \n
+        result = sanitize_csv("date,symbol\r2024-01-01,AAPL\r")
         assert "\r" not in result
 
     def test_semicolons_converted(self):
@@ -216,3 +237,19 @@ class TestAnalyzeBacktestRoute:
             environ_overrides={"CONTENT_LENGTH": ""},
         )
         assert resp.status_code in (400, 413)
+
+    def test_latin1_encoded_file_upload_accepted(self, client):
+        # A file encoded in latin-1 (not UTF-8) must be decoded and processed without error.
+        csv_bytes = "date,symbol,action,price,shares\n2024-01-15,IBM,BUY,10.00,1\n".encode("latin-1")
+        data = {"file": (io.BytesIO(csv_bytes), "trades.csv")}
+        resp = client.post("/analyze-backtest", content_type="multipart/form-data", data=data)
+        assert resp.status_code == 200
+
+    def test_png_upload_rejected_even_via_file_route(self, client):
+        # A PNG file must be rejected by the binary check regardless of decoding path.
+        # Use a minimal PNG header — \x89PNG\r\n\x1a\n — followed by null bytes
+        # (present in every real PNG IHDR chunk).
+        png_header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        data = {"file": (io.BytesIO(png_header), "image.csv")}
+        resp = client.post("/analyze-backtest", content_type="multipart/form-data", data=data)
+        assert resp.status_code == 400

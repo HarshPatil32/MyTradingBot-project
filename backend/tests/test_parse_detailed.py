@@ -1,3 +1,4 @@
+from csv_analyzer import FreeTierLimitExceeded
 """Tests for parse_detailed() in csv_analyzer."""
 import pytest
 
@@ -110,6 +111,11 @@ class TestParseDetailedActionValidation:
         with pytest.raises(ValueError, match="Row 2: action 'HOLD' is not BUY or SELL"):
             parse_detailed(csv_data)
 
+    def test_blank_action_raises(self):
+        csv_data = "date,symbol,action,price,shares\n2024-01-15,AAPL,,185.50,10\n"
+        with pytest.raises(ValueError, match="Row 2: action is blank"):
+            parse_detailed(csv_data)
+
 
 class TestParseDetailedPriceValidation:
     def test_zero_price_raises(self):
@@ -176,6 +182,33 @@ class TestParseDetailedSymbolValidation:
         result = parse_detailed(csv_data)
         assert result[0]["symbol"] == "AAPL"
 
+    def test_symbol_with_dot_accepted(self):
+        csv_data = "date,symbol,action,price,shares\n2024-01-15,BRK.B,BUY,200.00,5\n"
+        result = parse_detailed(csv_data)
+        assert result[0]["symbol"] == "BRK.B"
+
+    def test_symbol_with_hyphen_accepted(self):
+        csv_data = "date,symbol,action,price,shares\n2024-01-15,BRK-B,BUY,200.00,5\n"
+        result = parse_detailed(csv_data)
+        assert result[0]["symbol"] == "BRK-B"
+
+    def test_symbol_with_special_chars_raises(self):
+        bad_symbols = [
+            "AAPL!",   # special char
+            "123",     # digits only
+            "AAPL.",   # trailing dot
+            "AA PL",   # space
+            "A" * 21,  # too long
+        ]
+        for bad in bad_symbols:
+            csv_data = f"date,symbol,action,price,shares\n2024-01-15,{bad},BUY,185.50,10\n"
+            with pytest.raises(ValueError, match="invalid characters"):
+                parse_detailed(csv_data)
+        # Empty string triggers 'symbol is blank'
+        csv_data = "date,symbol,action,price,shares\n2024-01-15,,BUY,185.50,10\n"
+        with pytest.raises(ValueError, match="symbol is blank"):
+            parse_detailed(csv_data)
+
 
 class TestParseDetailedBlankRows:
     def test_blank_row_in_middle_skipped(self):
@@ -191,8 +224,14 @@ class TestParseDetailedFreeTierLimit:
             f"2024-01-{(i % 28) + 1:02d},AAPL,BUY,100.00,1\n"
             for i in range(FREE_TIER_TRADE_LIMIT + 1)
         )
-        with pytest.raises(ValueError, match=f"exceeds the free tier limit of {FREE_TIER_TRADE_LIMIT}"):
+        with pytest.raises(FreeTierLimitExceeded, match=f"exceeds the free tier limit of {FREE_TIER_TRADE_LIMIT}"):
             parse_detailed(header + rows)
+    def test_unrelated_value_error_not_caught_as_limit(self):
+        # Missing required column should raise ValueError, not FreeTierLimitExceeded
+        bad_csv = "date,symbol,action,price\n2024-01-15,AAPL,BUY,185.50\n"
+        with pytest.raises(ValueError) as excinfo:
+            parse_detailed(bad_csv)
+        assert "missing required columns" in str(excinfo.value)
 
     def test_exactly_at_limit_passes(self):
         header = "date,symbol,action,price,shares\n"
@@ -225,3 +264,18 @@ class TestParseDetailedWhitespaceCells:
         assert result[0]["action"] == "BUY"
         assert result[0]["price"] == 185.50
         assert result[0]["shares"] == 10.0
+
+
+class TestParseDetailedRaggedRows:
+    def test_short_row_raises_value_error(self):
+        # DictReader fills missing trailing cells with None; must raise a clear ValueError
+        csv_data = "date,symbol,action,price,shares\n2024-01-15,AAPL\n"
+        with pytest.raises(ValueError) as excinfo:
+            parse_detailed(csv_data)
+        assert "Row 2" in str(excinfo.value)
+
+    def test_short_row_missing_only_last_field_raises(self):
+        csv_data = "date,symbol,action,price,shares\n2024-01-15,AAPL,BUY,185.50\n"
+        with pytest.raises(ValueError) as excinfo:
+            parse_detailed(csv_data)
+        assert "Row 2" in str(excinfo.value)

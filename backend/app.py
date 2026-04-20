@@ -9,7 +9,7 @@ import json
 import numpy as np
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
-from csv_analyzer import analyze_uploaded_backtest
+from csv_analyzer import analyze_uploaded_backtest, FreeTierLimitExceeded
 
 # Load env vars early so they are available at module scope (picked up by gunicorn too)
 load_dotenv()
@@ -536,7 +536,12 @@ def analyze_backtest():
             except ValueError:
                 return jsonify({"error": "Invalid filename."}), 400
             raw_bytes = upload.read()
-            csv_data = raw_bytes.decode("utf-8", errors="replace")
+            try:
+                csv_data = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                # latin-1 is a 1:1 byte mapping so it never fails and preserves
+                # magic byte patterns needed by the binary-file safety check
+                csv_data = raw_bytes.decode("latin-1")
         elif request.is_json:
             body = request.get_json(silent=True) or {}
             csv_data = body.get("csv_data", "")
@@ -545,12 +550,16 @@ def analyze_backtest():
         else:
             return jsonify({"error": "Send a multipart file upload or JSON body with csv_data."}), 400
 
+
         result = analyze_uploaded_backtest(csv_data)
         return jsonify(result), 200
 
+    except FreeTierLimitExceeded as exc:
+        logger.warning("CSV upload rejected (free tier limit): %s", exc)
+        return jsonify({"error": str(exc)}), 400
     except ValueError as exc:
-        # Safety checks in csv_analyzer raise ValueError with a safe message
-        logger.warning("CSV upload rejected: %s", exc)
+        # Other ValueErrors (e.g. bad format) still return 400
+        logger.warning("CSV upload rejected (ValueError): %s", exc)
         return jsonify({"error": str(exc)}), 400
     except HTTPException:
         raise
