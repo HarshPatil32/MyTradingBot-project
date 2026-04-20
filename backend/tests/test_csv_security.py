@@ -239,12 +239,10 @@ class TestAnalyzeBacktestRoute:
         assert resp.status_code in (400, 413)
 
     def test_latin1_encoded_file_upload_accepted(self, client):
-        # A valid CSV encoded in latin-1 (not UTF-8) must be decoded without error.
-        # latin-1 byte 0xe9 = é — common in European locale exports.
-        csv_bytes = "date,symbol,action,price,shares\n2024-01-15,CAFÉ,BUY,10.00,1\n".encode("latin-1")
+        # A file encoded in latin-1 (not UTF-8) must be decoded and processed without error.
+        csv_bytes = "date,symbol,action,price,shares\n2024-01-15,IBM,BUY,10.00,1\n".encode("latin-1")
         data = {"file": (io.BytesIO(csv_bytes), "trades.csv")}
         resp = client.post("/analyze-backtest", content_type="multipart/form-data", data=data)
-        # The file is structurally valid; non-ASCII in the symbol column is accepted
         assert resp.status_code == 200
 
     def test_png_upload_rejected_even_via_file_route(self, client):

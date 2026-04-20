@@ -12,6 +12,7 @@ import csv
 import io
 import logging
 import math
+import re
 import statistics
 from datetime import datetime
 from typing import Any, Sequence
@@ -46,6 +47,9 @@ _BINARY_MAGIC: tuple[bytes, ...] = (
 # Characters that trigger formula execution in spreadsheet tools (CSV injection)
 _FORMULA_CHARS: frozenset[str] = frozenset({"=", "+", "@"})
 
+# Valid ticker: uppercase letters, digits, dots, hyphens; 1-20 chars total
+_SYMBOL_RE = re.compile(r"^[A-Z0-9]([A-Z0-9.\-]{0,19})?$")
+
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -60,8 +64,15 @@ def _is_numeric_cell(value: str) -> bool:
         return False
 
 
-def _parse_positive_float(value: str, field: str, row_num: int) -> float:
+def _require_field(value: str | None, row_num: int, name: str) -> str:
+    if value is None or not str(value).strip():
+        raise ValueError(f"Row {row_num}: {name} is blank")
+    return str(value).strip()
+
+
+def _parse_positive_float(value: str | None, field: str, row_num: int) -> float:
     """Parse a string as a positive finite float, raising ValueError with a clear message."""
+    value = _require_field(value, row_num, field)
     try:
         result = float(value)
     except ValueError:
@@ -71,13 +82,13 @@ def _parse_positive_float(value: str, field: str, row_num: int) -> float:
     return result
 
 
-def _parse_iso_date(value: str, field: str, row_num: int) -> datetime:
+def _parse_iso_date(value: str | None, field: str, row_num: int) -> datetime:
     """Parse a strict YYYY-MM-DD date string, raising ValueError with a clear message."""
+    value = _require_field(value, row_num, field)
     try:
         parsed = datetime.strptime(value, "%Y-%m-%d")
     except ValueError:
         raise ValueError(f"Row {row_num}: invalid {field} '{value}', expected YYYY-MM-DD")
-    # strptime accepts non-zero-padded dates like '2024-1-5'; the round-trip check catches them
     if parsed.strftime("%Y-%m-%d") != value:
         raise ValueError(f"Row {row_num}: invalid {field} '{value}', expected YYYY-MM-DD")
     return parsed
@@ -218,14 +229,20 @@ def parse_detailed(csv_data: str) -> list[dict]:
 
         raw_row = _strip_row(raw_row)
 
-        date_val = raw_row[col["date"]]
+        date_val = _require_field(raw_row[col["date"]], row_num, "date")
         _parse_iso_date(date_val, "date", row_num)  # validation only; date stored as string
 
-        symbol_val = raw_row[col["symbol"]].upper()
-        if not symbol_val:
-            raise ValueError(f"Row {row_num}: symbol is blank")
+        symbol_val = _require_field(raw_row[col["symbol"]], row_num, "symbol").upper()
+        # Disallow all-digit, trailing dot/hyphen, or any space
+        if (
+            not _SYMBOL_RE.match(symbol_val)
+            or symbol_val.isdigit()
+            or symbol_val.endswith(('.', '-'))
+            or ' ' in symbol_val
+        ):
+            raise ValueError(f"Row {row_num}: symbol '{symbol_val}' contains invalid characters")
 
-        action_val = raw_row[col["action"]].upper()
+        action_val = _require_field(raw_row[col["action"]], row_num, "action").upper()
         if action_val not in {"BUY", "SELL"}:
             raise ValueError(f"Row {row_num}: action '{action_val}' is not BUY or SELL")
 
