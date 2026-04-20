@@ -1,3 +1,4 @@
+from csv_analyzer import FreeTierLimitExceeded
 """Tests for parse_detailed() in csv_analyzer."""
 import pytest
 
@@ -223,8 +224,14 @@ class TestParseDetailedFreeTierLimit:
             f"2024-01-{(i % 28) + 1:02d},AAPL,BUY,100.00,1\n"
             for i in range(FREE_TIER_TRADE_LIMIT + 1)
         )
-        with pytest.raises(ValueError, match=f"exceeds the free tier limit of {FREE_TIER_TRADE_LIMIT}"):
+        with pytest.raises(FreeTierLimitExceeded, match=f"exceeds the free tier limit of {FREE_TIER_TRADE_LIMIT}"):
             parse_detailed(header + rows)
+    def test_unrelated_value_error_not_caught_as_limit(self):
+        # Missing required column should raise ValueError, not FreeTierLimitExceeded
+        bad_csv = "date,symbol,action,price\n2024-01-15,AAPL,BUY,185.50\n"
+        with pytest.raises(ValueError) as excinfo:
+            parse_detailed(bad_csv)
+        assert "missing required columns" in str(excinfo.value)
 
     def test_exactly_at_limit_passes(self):
         header = "date,symbol,action,price,shares\n"

@@ -19,11 +19,16 @@ from typing import Any, Sequence
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
-# Constants
+# Constants and Exceptions
 # ---------------------------------------------------------------------------
 
 FREE_TIER_TRADE_LIMIT = 100
+
+class FreeTierLimitExceeded(ValueError):
+    """Raised when the free tier trade limit is exceeded."""
+    pass
 
 REQUIRED_DETAILED_COLUMNS: frozenset[str] = frozenset(
     {"date", "symbol", "action", "price", "shares"}
@@ -198,8 +203,10 @@ def detect_format(csv_data: str) -> str:
     )
 
 
-def parse_detailed(csv_data: str) -> list[dict]:
-    """Parse a detailed trade-list CSV into a list of typed trade dicts."""
+def parse_detailed(csv_data: str, is_free_tier: bool = True) -> list[dict]:
+    """Parse a detailed trade-list CSV into a list of typed trade dicts.
+    If is_free_tier is True, enforce the free tier trade limit.
+    """
     reader = csv.DictReader(io.StringIO(csv_data))
 
     if reader.fieldnames is None:
@@ -222,8 +229,8 @@ def parse_detailed(csv_data: str) -> list[dict]:
             continue
 
         # Enforce limit on non-blank rows only
-        if len(trades) >= FREE_TIER_TRADE_LIMIT:
-            raise ValueError(
+        if is_free_tier and len(trades) >= FREE_TIER_TRADE_LIMIT:
+            raise FreeTierLimitExceeded(
                 f"Trade count exceeds the free tier limit of {FREE_TIER_TRADE_LIMIT}"
             )
 
