@@ -268,18 +268,32 @@ def parse_detailed(csv_data: str, is_free_tier: bool = True) -> list[dict]:
 
 
 def parse_summary(csv_data: str) -> dict:
-    """Parse a summary-format CSV into a single dict of aggregate metrics."""
+    """
+    Parse a summary-format CSV into a single dict of aggregate metrics.
+
+    Expected columns (case/padding ignored):
+        - initial_capital (float > 0)
+        - final_balance (float > 0)
+        - num_trades (int > 0, accepts e.g. "42" or "42.0")
+        - win_rate (float in [0, 1])
+        - start_date (YYYY-MM-DD string)
+        - end_date (YYYY-MM-DD string)
+    Extra columns are ignored. Missing/typoed columns raise ValueError.
+    """
     reader = csv.DictReader(io.StringIO(csv_data))
 
     if reader.fieldnames is None:
         raise ValueError("CSV is empty or has no header row")
 
+    # Normalize headers and check for required columns
     norm_to_original: dict[str, str] = {f.strip().lower(): f for f in reader.fieldnames}
-
-    missing = REQUIRED_SUMMARY_KEYS - norm_to_original.keys()
+    actual_cols = set(norm_to_original.keys())
+    missing = REQUIRED_SUMMARY_KEYS - actual_cols
+    extra = actual_cols - REQUIRED_SUMMARY_KEYS
     if missing:
-        raise ValueError(f"CSV missing required fields: {sorted(missing)}")
+        raise ValueError(f"CSV missing required fields: {sorted(missing)}. Did you typo a column?")
 
+    # Map normalized required keys to original header
     col = {norm: norm_to_original[norm] for norm in REQUIRED_SUMMARY_KEYS}
 
     data_row: dict | None = None
@@ -300,12 +314,18 @@ def parse_summary(csv_data: str) -> dict:
         data_row[col["final_balance"]], "final_balance", 2
     )
 
+    # Accept num_trades as "42" or "42.0" (but not "42.5")
     num_trades_str = data_row[col["num_trades"]]
     try:
         num_trades_f = float(num_trades_str)
     except ValueError:
         raise ValueError(f"Row 2: num_trades '{num_trades_str}' is not a number")
-    if math.isnan(num_trades_f) or math.isinf(num_trades_f) or num_trades_f <= 0 or num_trades_f % 1 != 0:
+    if (
+        math.isnan(num_trades_f)
+        or math.isinf(num_trades_f)
+        or num_trades_f <= 0
+        or num_trades_f % 1 != 0
+    ):
         raise ValueError(f"Row 2: num_trades must be a positive integer, got '{num_trades_str}'")
     num_trades = int(num_trades_f)
 
@@ -329,6 +349,7 @@ def parse_summary(csv_data: str) -> dict:
             f"Row 2: start_date '{start_date_str}' must not be after end_date '{end_date_str}'"
         )
 
+    # Extra columns are ignored, but could be logged if needed
     return {
         "initial_capital": initial_capital,
         "final_balance": final_balance,
