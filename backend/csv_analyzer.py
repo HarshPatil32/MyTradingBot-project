@@ -375,15 +375,20 @@ def validate_trades(trades: list[dict]) -> list[dict]:
     # Detect duplicate rows: same date + symbol + action + price + shares
     seen: set[tuple] = set()
     for trade in trades:
+        # Always normalize action and symbol for all checks
         action = _normalize_action(trade.get("action"))
-        key = (trade.get("date"), trade.get("symbol"), action, trade.get("price"), trade.get("shares"))
+        symbol = str(trade.get("symbol") or "").strip().upper()
+        # Overwrite the trade dict so downstream code always sees normalized values
+        trade["action"] = action
+        trade["symbol"] = symbol
+        key = (trade.get("date"), symbol, action, trade.get("price"), trade.get("shares"))
         if key in seen:
             warnings.append({
                 "type": "duplicate",
                 "level": "warning",
                 "message": (
                     f"Duplicate trade: {action} {trade.get('shares')} "
-                    f"{trade.get('symbol')} @ {trade.get('price')} on {trade.get('date')}"
+                    f"{symbol} @ {trade.get('price')} on {trade.get('date')}"
                 ),
             })
         else:
@@ -392,26 +397,28 @@ def validate_trades(trades: list[dict]) -> list[dict]:
     # Check BUY/SELL pairing per symbol using a simple FIFO stack
     open_buys: dict[str, list[dict]] = {}
     for trade in trades:
-        symbol = trade.get("symbol")
         action = _normalize_action(trade.get("action"))
+        symbol = str(trade.get("symbol") or "").strip().upper()
         if action == "BUY":
             open_buys.setdefault(symbol, []).append(trade)
         elif action == "SELL":
             if not open_buys.get(symbol):
+                date = trade.get("date") or "unknown date"
                 warnings.append({
                     "type": "unmatched_sell",
                     "level": "warning",
-                    "message": f"SELL for {symbol} on {trade.get('date')} has no preceding BUY",
+                    "message": f"SELL for {symbol} on {date} has no preceding BUY",
                 })
             else:
                 open_buys[symbol].pop(0)
 
     for symbol, buys in open_buys.items():
         for buy in buys:
+            date = buy.get("date") or "unknown date"
             warnings.append({
                 "type": "unclosed_position",
                 "level": "info",
-                "message": f"Open position: {symbol} BUY on {buy['date']} (no matching SELL yet)",
+                "message": f"Open position: {symbol} BUY on {date} (no matching SELL yet)",
             })
 
     return warnings

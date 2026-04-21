@@ -13,6 +13,29 @@ def _trade(date, symbol, action, price, shares):
 # ---------------------------------------------------------------------------
 
 class TestValidateTrades:
+
+    def test_sell_lowercase_action_flagged(self):
+        trades = [
+            {"date": "2024-01-02", "symbol": "AAPL", "action": "sell", "price": 110.0, "shares": 10},
+        ]
+        warnings = validate_trades(trades)
+        assert any(w["type"] == "unmatched_sell" and w["level"] == "warning" for w in warnings)
+
+    def test_symbol_with_whitespace_still_matched(self):
+        trades = [
+            {"date": "2024-01-01", "symbol": "AAPL ", "action": "BUY", "price": 100.0, "shares": 10},
+            {"date": "2024-01-02", "symbol": "AAPL", "action": "SELL", "price": 110.0, "shares": 10},
+        ]
+        warnings = validate_trades(trades)
+        assert not any(w["type"] == "unmatched_sell" for w in warnings)
+
+    def test_sell_missing_date_field(self):
+        trades = [
+            {"symbol": "AAPL", "action": "SELL", "price": 110.0, "shares": 10},
+        ]
+        warnings = validate_trades(trades)
+        assert any(w["type"] == "unmatched_sell" and "unknown date" in w["message"] for w in warnings)
+
     def test_missing_level_key_defaults_to_warning(self):
         # Simulate a trade warning without a level key
         items = [
@@ -128,6 +151,30 @@ class TestValidateTrades:
         same_uppercase = _trade("2024-01-01", "AAPL", "BUY", 100.0, 10)
         warnings = validate_trades([trade, same_uppercase])
         assert any(w["type"] == "duplicate" for w in warnings)
+
+    def test_multiple_sells_no_buy_each_flagged(self):
+        # Two SELLs for the same symbol with no BUY — both should be flagged
+        trades = [
+            _trade("2024-01-01", "AAPL", "SELL", 110.0, 10),
+            _trade("2024-01-02", "AAPL", "SELL", 115.0, 10),
+        ]
+        warnings = validate_trades(trades)
+        unmatched = [w for w in warnings if w["type"] == "unmatched_sell"]
+        assert len(unmatched) == 2
+        assert all(w["level"] == "warning" for w in unmatched)
+
+    def test_more_sells_than_buys_extra_sell_flagged(self):
+        # One BUY consumed by first SELL; second SELL has no BUY left
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+            _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
+            _trade("2024-03-01", "AAPL", "SELL", 120.0, 10),
+        ]
+        warnings = validate_trades(trades)
+        unmatched = [w for w in warnings if w["type"] == "unmatched_sell"]
+        assert len(unmatched) == 1
+        assert "2024-03-01" in unmatched[0]["message"]
+        assert unmatched[0]["level"] == "warning"
 
 
 # ---------------------------------------------------------------------------
