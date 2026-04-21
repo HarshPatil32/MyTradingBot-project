@@ -380,6 +380,7 @@ def validate_trades(trades: list[dict]) -> list[dict]:
         if key in seen:
             warnings.append({
                 "type": "duplicate",
+                "level": "warning",
                 "message": (
                     f"Duplicate trade: {action} {trade.get('shares')} "
                     f"{trade.get('symbol')} @ {trade.get('price')} on {trade.get('date')}"
@@ -399,6 +400,7 @@ def validate_trades(trades: list[dict]) -> list[dict]:
             if not open_buys.get(symbol):
                 warnings.append({
                     "type": "unmatched_sell",
+                    "level": "warning",
                     "message": f"SELL for {symbol} on {trade.get('date')} has no preceding BUY",
                 })
             else:
@@ -408,7 +410,8 @@ def validate_trades(trades: list[dict]) -> list[dict]:
         for buy in buys:
             warnings.append({
                 "type": "unclosed_position",
-                "message": f"BUY for {symbol} on {buy['date']} has no matching SELL",
+                "level": "info",
+                "message": f"Open position: {symbol} BUY on {buy['date']} (no matching SELL yet)",
             })
 
     return warnings
@@ -484,12 +487,17 @@ def analyze_uploaded_trades(csv_data: str) -> dict:
         trades = parse_detailed(clean)
         if trades is None:
             trades = []
-        warnings = validate_trades(trades) or []
+        all_issues = validate_trades(trades) or []
+        WARNING_LEVELS = {"warning", "error"}
+        INFO_LEVELS = {"info"}
+        warnings = [i for i in all_issues if i.get("level", "warning") in WARNING_LEVELS]
+        notices = [i for i in all_issues if i.get("level") in INFO_LEVELS]
         pnl = calculate_pnl(trades) if trades else {}
         result = {
             "format": fmt,
             "trades": trades,
             "warnings": warnings,
+            "notices": notices,
             "pnl": pnl
         }
         print("DEBUG: Returning from detailed (main try):", result)
@@ -507,6 +515,7 @@ def analyze_uploaded_trades(csv_data: str) -> dict:
                     "summary": summary,
                     "trades": [],
                     "warnings": [],
+                    "notices": [],
                     "pnl": {}
                 }
                 print("DEBUG: Returning from summary:", result)
@@ -515,12 +524,17 @@ def analyze_uploaded_trades(csv_data: str) -> dict:
             trades = parse_detailed(clean)
             if trades is None:
                 trades = []
-            warnings = validate_trades(trades) or []
+            all_issues = validate_trades(trades) or []
+            WARNING_LEVELS = {"warning", "error"}
+            INFO_LEVELS = {"info"}
+            warnings = [i for i in all_issues if i.get("level", "warning") in WARNING_LEVELS]
+            notices = [i for i in all_issues if i.get("level") in INFO_LEVELS]
             pnl = calculate_pnl(trades) if trades else {}
             result = {
                 "format": fmt,
                 "trades": trades,
                 "warnings": warnings,
+                "notices": notices,
                 "pnl": pnl
             }
             print("DEBUG: Returning from detailed:", result)
@@ -535,6 +549,7 @@ def analyze_uploaded_trades(csv_data: str) -> dict:
                 "format": "detailed",  # fallback to detailed for test expectations
                 "trades": [],
                 "warnings": [],
+                "notices": [],
                 "pnl": {},
                 # 'summary' key is omitted for detailed fallback
             }

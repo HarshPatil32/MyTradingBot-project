@@ -13,6 +13,38 @@ def _trade(date, symbol, action, price, shares):
 # ---------------------------------------------------------------------------
 
 class TestValidateTrades:
+    def test_missing_level_key_defaults_to_warning(self):
+        # Simulate a trade warning without a level key
+        items = [
+            {"type": "duplicate", "message": "dup"},
+            {"type": "unmatched_sell", "message": "sell"},
+        ]
+        # Patch analyze_uploaded_trades to use these items
+        from csv_analyzer import analyze_uploaded_trades
+        def fake_validate_trades(_):
+            return items
+        import csv_analyzer
+        orig = csv_analyzer.validate_trades
+        csv_analyzer.validate_trades = fake_validate_trades
+        try:
+            result = analyze_uploaded_trades("date,symbol,action,price,shares\n")
+            assert "notices" in result
+            assert all(w["type"] in {"duplicate", "unmatched_sell"} for w in result["warnings"])
+        finally:
+            csv_analyzer.validate_trades = orig
+
+    def test_analyze_uploaded_trades_returns_notices_key(self):
+        from csv_analyzer import analyze_uploaded_trades
+        csv = "date,symbol,action,price,shares\n2024-01-01,AAPL,BUY,100,10\n2024-02-01,AAPL,SELL,110,10\n"
+        result = analyze_uploaded_trades(csv)
+        assert "notices" in result
+        assert isinstance(result["notices"], list)
+
+    def test_no_open_positions_empty_notices(self):
+        from csv_analyzer import analyze_uploaded_trades
+        csv = "date,symbol,action,price,shares\n2024-01-01,AAPL,BUY,100,10\n2024-02-01,AAPL,SELL,110,10\n"
+        result = analyze_uploaded_trades(csv)
+        assert result["notices"] == []
     def test_no_warnings_for_clean_trades(self):
         trades = [
             _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
@@ -30,10 +62,37 @@ class TestValidateTrades:
         warnings = validate_trades(trades)
         assert any(w["type"] == "unmatched_sell" for w in warnings)
 
+    def test_unclosed_position_is_info_not_warning(self):
+        trades = [_trade("2024-01-01", "AAPL", "BUY", 100.0, 10)]
+        items = validate_trades(trades)
+        unclosed = [i for i in items if i["type"] == "unclosed_position"]
+        assert len(unclosed) == 1
+        assert unclosed[0]["level"] == "info"
+
     def test_unclosed_position_warns(self):
         trades = [_trade("2024-01-01", "AAPL", "BUY", 100.0, 10)]
         warnings = validate_trades(trades)
         assert any(w["type"] == "unclosed_position" for w in warnings)
+
+    def test_duplicate_has_warning_level(self):
+        trade = _trade("2024-01-01", "AAPL", "BUY", 100.0, 10)
+        items = validate_trades([trade, trade])
+        duplicates = [i for i in items if i["type"] == "duplicate"]
+        assert all(d["level"] == "warning" for d in duplicates)
+
+    def test_unmatched_sell_has_warning_level(self):
+        trades = [_trade("2024-01-01", "AAPL", "SELL", 110.0, 10)]
+        items = validate_trades(trades)
+        unmatched = [i for i in items if i["type"] == "unmatched_sell"]
+        assert all(u["level"] == "warning" for u in unmatched)
+
+    def test_open_position_message_is_informational(self):
+        trades = [_trade("2024-01-15", "TSLA", "BUY", 200.0, 5)]
+        items = validate_trades(trades)
+        unclosed = [i for i in items if i["type"] == "unclosed_position"]
+        assert len(unclosed) == 1
+        assert "TSLA" in unclosed[0]["message"]
+        assert "2024-01-15" in unclosed[0]["message"]
 
     def test_multiple_symbols_paired_independently(self):
         trades = [
