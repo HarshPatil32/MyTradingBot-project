@@ -1,7 +1,7 @@
 """Tests for parse_summary() in csv_analyzer."""
 import pytest
 
-from csv_analyzer import parse_summary, analyze_uploaded_backtest
+from csv_analyzer import parse_summary, analyze_uploaded_trades
 
 
 VALID_CSV = (
@@ -204,20 +204,21 @@ class TestParseSummaryMultipleRows:
 
 class TestParseSummaryIntegration:
     def test_analyze_returns_format_and_summary_keys(self):
-        result = analyze_uploaded_backtest(VALID_CSV)
+        result = analyze_uploaded_trades(VALID_CSV)
         assert result["format"] == "summary"
         assert "summary" in result
 
     def test_analyze_summary_values_are_typed(self):
-        summary = analyze_uploaded_backtest(VALID_CSV)["summary"]
+        summary = analyze_uploaded_trades(VALID_CSV)["summary"]
         assert isinstance(summary["initial_capital"], float)
         assert isinstance(summary["num_trades"], int)
         assert isinstance(summary["win_rate"], float)
 
     def test_analyze_invalid_summary_raises_via_entry_point(self):
         bad_csv = "initial_capital,final_balance,num_trades,win_rate,start_date,end_date\n10000,12000,42,1.5,2024-01-01,2024-12-31\n"
-        with pytest.raises(ValueError, match="win_rate"):
-            analyze_uploaded_backtest(bad_csv)
+        result = analyze_uploaded_trades(bad_csv)
+        assert "error" in result
+        assert "win_rate" in result["error"]
 
 
 class TestParseSummaryWhitespaceCells:

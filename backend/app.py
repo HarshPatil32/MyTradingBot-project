@@ -9,7 +9,7 @@ import json
 import numpy as np
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
-from csv_analyzer import analyze_uploaded_backtest, FreeTierLimitExceeded
+from csv_analyzer import analyze_uploaded_trades, FreeTierLimitExceeded
 
 # Load env vars early so they are available at module scope (picked up by gunicorn too)
 load_dotenv()
@@ -525,9 +525,9 @@ def _safe_filename(raw: str) -> str:
     return name
 
 
-@app.route('/analyze-backtest', methods=['POST'])
-def analyze_backtest():
-    """Accept a CSV upload and return sanitized backtest analysis."""
+@app.route('/analyze-trades', methods=['POST'])
+def analyze_trades():
+    """Accept a CSV upload and return sanitized trade analysis."""
     try:
         if 'file' in request.files:
             upload = request.files['file']
@@ -551,7 +551,9 @@ def analyze_backtest():
             return jsonify({"error": "Send a multipart file upload or JSON body with csv_data."}), 400
 
 
-        result = analyze_uploaded_backtest(csv_data)
+        result = analyze_uploaded_trades(csv_data)
+        if isinstance(result, dict) and result.get("error"):
+            return jsonify(result), 400
         return jsonify(result), 200
 
     except FreeTierLimitExceeded as exc:

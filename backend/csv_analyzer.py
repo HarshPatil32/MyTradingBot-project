@@ -1,7 +1,7 @@
 """
 csv_analyzer.py
 ---------------
-Parses, validates, and normalises uploaded backtest CSV files before
+Parses, validates, and normalises uploaded trade history CSV files before
 handing the cleaned trade data off to the analysis modules.
 
 """
@@ -464,16 +464,25 @@ def calculate_pnl(trades: list[dict]) -> dict:
     }
 
 
-def analyze_uploaded_backtest(csv_data: str) -> dict:
-    """Main entry point: sanitize, detect format, parse, validate, and return a normalised trade dict."""
-    clean = sanitize_csv(csv_data)
-    # All downstream calls (detect_format, parse_detailed, etc.) must use `clean`, not `csv_data`
-    fmt = detect_format(clean)
-    if fmt == "summary":
-        summary = parse_summary(clean)
-        return {"format": fmt, "summary": summary}
+def analyze_uploaded_trades(csv_data: str) -> dict:
+    """Main entry point: sanitize, detect format, parse, validate, and return a normalised trade dict for real trade history uploads."""
+    try:
+        clean = sanitize_csv(csv_data)
+        # All downstream calls (detect_format, parse_detailed, etc.) must use `clean`, not `csv_data`
+        fmt = detect_format(clean)
+        if fmt == "summary":
+            summary = parse_summary(clean)
+            return {"format": fmt, "summary": summary}
 
-    trades = parse_detailed(clean)
-    warnings = validate_trades(trades)
+        trades = parse_detailed(clean)
+    except Exception as e:
+        return {
+            "error": f"Failed to parse file: {str(e)}",
+            "format": None,
+            "trades": [],
+            "warnings": [],
+            "pnl": {}
+        }
+    warnings = validate_trades(trades) or []
     pnl = calculate_pnl(trades)
     return {"format": fmt, "trades": trades, "warnings": warnings, "pnl": pnl}

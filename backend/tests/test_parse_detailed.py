@@ -2,7 +2,7 @@ from csv_analyzer import FreeTierLimitExceeded
 """Tests for parse_detailed() in csv_analyzer."""
 import pytest
 
-from csv_analyzer import parse_detailed, FREE_TIER_TRADE_LIMIT
+from csv_analyzer import parse_detailed, FREE_TIER_TRADE_LIMIT, analyze_uploaded_trades
 
 
 VALID_CSV = "date,symbol,action,price,shares\n2024-01-15,AAPL,BUY,185.50,10\n2024-02-20,AAPL,SELL,195.20,10\n"
@@ -279,3 +279,54 @@ class TestParseDetailedRaggedRows:
         with pytest.raises(ValueError) as excinfo:
             parse_detailed(csv_data)
         assert "Row 2" in str(excinfo.value)
+
+
+class TestAnalyzeUploadedTradesDetailed:
+    def test_empty_file_returns_error(self):
+        result = analyze_uploaded_trades("")
+        assert "error" in result
+        assert result["trades"] == []
+        assert isinstance(result["warnings"], list)
+
+    def test_bad_file_returns_error(self):
+        # Missing required columns
+        bad_csv = "date,symbol,action,price\n2024-01-15,AAPL,BUY,185.50\n"
+        result = analyze_uploaded_trades(bad_csv)
+        assert "error" in result
+        assert result["trades"] == []
+        assert isinstance(result["warnings"], list)
+
+    _VALID_CSV = (
+        "date,symbol,action,price,shares\n"
+        "2024-01-15,AAPL,BUY,185.50,10\n"
+        "2024-02-20,AAPL,SELL,195.20,10\n"
+    )
+
+    def test_returns_format_detailed(self):
+        result = analyze_uploaded_trades(self._VALID_CSV)
+        assert result["format"] == "detailed"
+
+    def test_returns_trades_list(self):
+        result = analyze_uploaded_trades(self._VALID_CSV)
+        assert isinstance(result["trades"], list)
+        assert len(result["trades"]) == 2
+
+    def test_returns_warnings_list(self):
+        result = analyze_uploaded_trades(self._VALID_CSV)
+        assert isinstance(result["warnings"], list)
+
+    def test_no_warnings_for_clean_trades(self):
+        result = analyze_uploaded_trades(self._VALID_CSV)
+        assert result["warnings"] == []
+
+    def test_returns_pnl_dict(self):
+        result = analyze_uploaded_trades(self._VALID_CSV)
+        assert isinstance(result["pnl"], dict)
+
+    def test_unmatched_sell_surfaces_as_warning(self):
+        csv_data = (
+            "date,symbol,action,price,shares\n"
+            "2024-01-15,AAPL,SELL,195.20,10\n"
+        )
+        result = analyze_uploaded_trades(csv_data)
+        assert any(w["type"] == "unmatched_sell" for w in result["warnings"])
