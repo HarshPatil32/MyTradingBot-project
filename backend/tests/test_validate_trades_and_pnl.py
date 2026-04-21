@@ -57,6 +57,19 @@ class TestValidateTrades:
     def test_returns_list(self):
         assert isinstance(validate_trades([]), list)
 
+    def test_mixed_case_actions_no_warnings(self):
+        trades = [
+            _trade("2024-01-01", "AAPL", "buy", 100.0, 10),
+            _trade("2024-02-01", "AAPL", "Sell", 110.0, 10),
+        ]
+        assert validate_trades(trades) == []
+
+    def test_mixed_case_duplicate_detected(self):
+        trade = _trade("2024-01-01", "AAPL", "buy", 100.0, 10)
+        same_uppercase = _trade("2024-01-01", "AAPL", "BUY", 100.0, 10)
+        warnings = validate_trades([trade, same_uppercase])
+        assert any(w["type"] == "duplicate" for w in warnings)
+
 
 # ---------------------------------------------------------------------------
 # calculate_pnl
@@ -143,3 +156,69 @@ class TestCalculatePnl:
     def test_result_keys_present(self):
         result = calculate_pnl([])
         assert set(result.keys()) == {"trade_pnl", "equity_curve", "total_pnl", "total_return_pct"}
+
+    def test_mixed_case_actions_compute_correctly(self):
+        trades = [
+            _trade("2024-01-01", "AAPL", "buy", 100.0, 10),
+            _trade("2024-02-01", "AAPL", "Sell", 110.0, 10),
+        ]
+        result = calculate_pnl(trades)
+        assert result["total_pnl"] == 100.0
+        assert len(result["trade_pnl"]) == 1
+
+    def test_mixed_case_sell_actions_no_warnings(self):
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+            _trade("2024-02-01", "AAPL", "sell", 110.0, 10),
+        ]
+        assert validate_trades(trades) == []
+
+    def test_mixed_case_sell_duplicate_detected(self):
+        trade = _trade("2024-01-01", "AAPL", "SELL", 100.0, 10)
+        same_lowercase = _trade("2024-01-01", "AAPL", "sell", 100.0, 10)
+        warnings = validate_trades([trade, same_lowercase])
+        assert any(w["type"] == "duplicate" for w in warnings)
+
+    def test_missing_action_does_not_crash(self):
+        trades = [
+            {"date": "2024-01-01", "symbol": "AAPL", "price": 100.0, "shares": 10},
+            _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
+        ]
+        # Should not raise, should treat missing action as non-BUY/SELL and skip
+        warnings = validate_trades(trades)
+        assert isinstance(warnings, list)
+
+    def test_null_action_does_not_crash(self):
+        trades = [
+            {"date": "2024-01-01", "symbol": "AAPL", "action": None, "price": 100.0, "shares": 10},
+            _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
+        ]
+        warnings = validate_trades(trades)
+        assert isinstance(warnings, list)
+
+    def test_mixed_case_sell_actions_compute_correctly(self):
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+            _trade("2024-02-01", "AAPL", "sell", 110.0, 10),
+        ]
+        result = calculate_pnl(trades)
+        assert result["total_pnl"] == 100.0
+        assert len(result["trade_pnl"]) == 1
+
+    def test_missing_action_skipped_in_pnl(self):
+        trades = [
+            {"date": "2024-01-01", "symbol": "AAPL", "price": 100.0, "shares": 10},
+            _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
+        ]
+        result = calculate_pnl(trades)
+        assert result["total_pnl"] == 0.0
+        assert result["trade_pnl"] == []
+
+    def test_null_action_skipped_in_pnl(self):
+        trades = [
+            {"date": "2024-01-01", "symbol": "AAPL", "action": None, "price": 100.0, "shares": 10},
+            _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
+        ]
+        result = calculate_pnl(trades)
+        assert result["total_pnl"] == 0.0
+        assert result["trade_pnl"] == []
