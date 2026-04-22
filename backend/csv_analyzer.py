@@ -423,6 +423,32 @@ def validate_trades(trades: list[dict]) -> list[dict]:
                 "message": f"Open position: {symbol} BUY on {date} (no matching SELL yet)",
             })
 
+    # Check for zero or negative price or share count, or missing/invalid values
+    def _is_invalid_value(val):
+        try:
+            return float(val) <= 0
+        except (TypeError, ValueError):
+            return True
+
+    for idx, trade in enumerate(trades):
+        symbol = str(trade.get("symbol") or "").strip().upper()
+        date = trade.get("date") or "unknown date"
+        price = trade.get("price")
+        shares = trade.get("shares")
+
+        if _is_invalid_value(price):
+            warnings.append({
+                "type": "invalid_price",
+                "level": "warning",
+                "message": f"Row {idx+1}: Trade {symbol} on {date} has invalid price: {price}",
+            })
+        if _is_invalid_value(shares):
+            warnings.append({
+                "type": "invalid_shares",
+                "level": "warning",
+                "message": f"Row {idx+1}: Trade {symbol} on {date} has invalid share count: {shares}",
+            })
+
     return warnings
 
 

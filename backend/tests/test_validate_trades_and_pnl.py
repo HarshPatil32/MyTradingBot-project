@@ -78,6 +78,44 @@ class TestValidateTrades:
         finally:
             csv_analyzer.validate_trades = orig
 
+    def test_zero_price_flagged(self):
+        trades = [_trade("2024-01-01", "AAPL", "BUY", 0, 10)]
+        warnings = validate_trades(trades)
+        assert any(w["type"] == "invalid_price" and w["level"] == "warning" for w in warnings)
+
+    def test_negative_price_flagged(self):
+        trades = [_trade("2024-01-01", "AAPL", "BUY", -5.0, 10)]
+        warnings = validate_trades(trades)
+        assert any(w["type"] == "invalid_price" and w["level"] == "warning" for w in warnings)
+
+    def test_zero_shares_flagged(self):
+        trades = [_trade("2024-01-01", "AAPL", "BUY", 100.0, 0)]
+        warnings = validate_trades(trades)
+        assert any(w["type"] == "invalid_shares" and w["level"] == "warning" for w in warnings)
+
+    def test_negative_shares_flagged(self):
+        trades = [_trade("2024-01-01", "AAPL", "BUY", 100.0, -5)]
+        warnings = validate_trades(trades)
+        assert any(w["type"] == "invalid_shares" and w["level"] == "warning" for w in warnings)
+
+    def test_valid_trade_no_invalid_value_warnings(self):
+        trades = [_trade("2024-01-01", "AAPL", "BUY", 150.0, 10)]
+        warnings = validate_trades(trades)
+        assert not any(w["type"] in {"invalid_price", "invalid_shares"} for w in warnings)
+
+    def test_both_price_and_shares_invalid(self):
+        trades = [_trade("2024-01-01", "MSFT", "BUY", 0, 0)]
+        warnings = validate_trades(trades)
+        assert any(w["type"] == "invalid_price" for w in warnings)
+        assert any(w["type"] == "invalid_shares" for w in warnings)
+
+    def test_invalid_price_warning_contains_symbol_and_date(self):
+        trades = [_trade("2024-03-15", "TSLA", "BUY", -1.0, 5)]
+        warnings = validate_trades(trades)
+        match = next(w for w in warnings if w["type"] == "invalid_price")
+        assert "TSLA" in match["message"]
+        assert "2024-03-15" in match["message"]
+
     def test_analyze_uploaded_trades_returns_notices_key(self):
         from csv_analyzer import analyze_uploaded_trades
         csv = "date,symbol,action,price,shares\n2024-01-01,AAPL,BUY,100,10\n2024-02-01,AAPL,SELL,110,10\n"
