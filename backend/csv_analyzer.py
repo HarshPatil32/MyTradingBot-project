@@ -372,27 +372,29 @@ def validate_trades(trades: list[dict]) -> list[dict]:
     """
     warnings: list[dict] = []
 
-    # Detect duplicate rows: same date + symbol + action + price + shares
-    seen: set[tuple] = set()
+    # Detect duplicate rows: same date + symbol + action (normalized)
+    seen: dict[tuple, int] = {}
     for trade in trades:
-        # Always normalize action and symbol for all checks
+        # Normalize action and symbol for all checks
         action = _normalize_action(trade.get("action"))
         symbol = str(trade.get("symbol") or "").strip().upper()
+        date = str(trade.get("date") or "").strip()
         # Overwrite the trade dict so downstream code always sees normalized values
         trade["action"] = action
         trade["symbol"] = symbol
-        key = (trade.get("date"), symbol, action, trade.get("price"), trade.get("shares"))
-        if key in seen:
+        key = (date, symbol, action)
+        seen[key] = seen.get(key, 0) + 1
+
+    for key, count in seen.items():
+        if count > 1:
+            date, symbol, action = key
             warnings.append({
                 "type": "duplicate",
                 "level": "warning",
                 "message": (
-                    f"Duplicate trade: {action} {trade.get('shares')} "
-                    f"{symbol} @ {trade.get('price')} on {trade.get('date')}"
+                    f"Duplicate trade: {action} {symbol} on {date} appears {count} times"
                 ),
             })
-        else:
-            seen.add(key)
 
     # Check BUY/SELL pairing per symbol using a simple FIFO stack
     open_buys: dict[str, list[dict]] = {}

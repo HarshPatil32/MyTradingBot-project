@@ -13,6 +13,28 @@ def _trade(date, symbol, action, price, shares):
 # ---------------------------------------------------------------------------
 
 class TestValidateTrades:
+    def test_duplicate_case_insensitive(self):
+        # Should detect duplicate even if action/symbol case differs
+        trade1 = _trade("2024-01-01", "aapl", "buy", 100.0, 10)
+        trade2 = _trade("2024-01-01", "AAPL", "BUY", 105.0, 5)
+        warnings = validate_trades([trade1, trade2])
+        assert any(w["type"] == "duplicate" for w in warnings)
+
+    def test_duplicate_symbol_whitespace(self):
+        # Should detect duplicate even if symbol has extra whitespace
+        trade1 = _trade("2024-01-01", "AAPL ", "BUY", 100.0, 10)
+        trade2 = _trade("2024-01-01", "AAPL", "BUY", 105.0, 5)
+        warnings = validate_trades([trade1, trade2])
+        assert any(w["type"] == "duplicate" for w in warnings)
+
+    def test_multiple_duplicates_only_one_warning(self):
+        # Three identical trades should produce one warning with count=3
+        trade1 = _trade("2024-01-01", "AAPL", "BUY", 100.0, 10)
+        trade2 = _trade("2024-01-01", "AAPL", "BUY", 105.0, 5)
+        trade3 = _trade("2024-01-01", "AAPL", "BUY", 110.0, 2)
+        warnings = [w for w in validate_trades([trade1, trade2, trade3]) if w["type"] == "duplicate"]
+        assert len(warnings) == 1
+        assert "appears 3 times" in warnings[0]["message"]
 
     def test_sell_lowercase_action_flagged(self):
         trades = [
@@ -151,6 +173,20 @@ class TestValidateTrades:
         same_uppercase = _trade("2024-01-01", "AAPL", "BUY", 100.0, 10)
         warnings = validate_trades([trade, same_uppercase])
         assert any(w["type"] == "duplicate" for w in warnings)
+
+    def test_duplicate_different_price_same_date_symbol_action_warns(self):
+        # Same date+symbol+action but different price/shares — still a duplicate
+        trade1 = _trade("2024-01-01", "AAPL", "BUY", 100.0, 10)
+        trade2 = _trade("2024-01-01", "AAPL", "BUY", 105.0, 5)
+        warnings = validate_trades([trade1, trade2])
+        assert any(w["type"] == "duplicate" for w in warnings)
+
+    def test_same_date_symbol_different_action_not_duplicate(self):
+        # BUY and SELL on same date+symbol are not duplicates
+        trade1 = _trade("2024-01-01", "AAPL", "BUY", 100.0, 10)
+        trade2 = _trade("2024-01-01", "AAPL", "SELL", 100.0, 10)
+        warnings = validate_trades([trade1, trade2])
+        assert not any(w["type"] == "duplicate" for w in warnings)
 
     def test_multiple_sells_no_buy_each_flagged(self):
         # Two SELLs for the same symbol with no BUY — both should be flagged
