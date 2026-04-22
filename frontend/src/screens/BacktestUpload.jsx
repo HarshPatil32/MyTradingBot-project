@@ -18,8 +18,9 @@ function FormatBadge({ format }) {
   )
 }
 
-function DetailedResults({ trades, warnings, pnl }) {
+function DetailedResults({ trades, warnings, notices, pnl }) {
   const safeWarnings = warnings ?? []
+  const safeNotices = notices ?? []
   return (
     <div className="space-y-4">
       {safeWarnings.length > 0 && (
@@ -28,6 +29,17 @@ function DetailedResults({ trades, warnings, pnl }) {
           <ul className="list-disc list-inside text-sm text-yellow-700 space-y-1">
             {safeWarnings.map((w, i) => (
               <li key={i}>{w.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {safeNotices.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded p-3">
+          <p className="font-medium text-blue-800 mb-1">Open Positions</p>
+          <ul className="list-disc list-inside text-sm text-blue-700 space-y-1">
+            {safeNotices.map((n, i) => (
+              <li key={i}>{n.message}</li>
             ))}
           </ul>
         </div>
@@ -255,6 +267,7 @@ export default function BacktestUpload() {
               <DetailedResults
                 trades={result.trades}
                 warnings={result.warnings}
+                notices={result.notices}
                 pnl={result.pnl}
               />
             ) : (
