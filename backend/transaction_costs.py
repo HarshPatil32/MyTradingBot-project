@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 # Default cost assumptions (all overridable via CostConfig)
 # ---------------------------------------------------------------------------
 
-DEFAULT_COMMISSION_PER_TRADE: float = 1.00   # $ per trade leg (one-way)
+DEFAULT_COMMISSION_PER_TRADE: float = 1.00   # Commission in USD per trade leg (each BUY or SELL)
 DEFAULT_SLIPPAGE_PCT: float = 0.008          # 0.8% per fill (round-trip = ×2)
 DEFAULT_SPREAD_PCT: float = 0.002            # 0.2% round-trip
 DEFAULT_SHORT_TERM_TAX_RATE: float = 0.37   # Federal max short-term CGT

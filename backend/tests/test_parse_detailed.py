@@ -323,6 +323,27 @@ class TestAnalyzeUploadedTradesDetailed:
         result = analyze_uploaded_trades(self._VALID_CSV)
         assert isinstance(result["pnl"], dict)
 
+    def test_returns_commissions_dict(self):
+        result = analyze_uploaded_trades(self._VALID_CSV)
+        assert isinstance(result["commissions"], dict)
+        assert "total_commission_usd" in result["commissions"]
+        assert "num_trades" in result["commissions"]
+
+    def test_default_commission_is_one_dollar_per_leg(self):
+        # 2 trade legs (1 BUY + 1 SELL) × $1.00 default = $2.00
+        result = analyze_uploaded_trades(self._VALID_CSV)
+        assert result["commissions"]["total_commission_usd"] == pytest.approx(2.0)
+        assert result["commissions"]["num_trades"] == 2
+
+    def test_custom_commission_per_trade(self):
+        # 2 trade legs × $4.95 = $9.90
+        result = analyze_uploaded_trades(self._VALID_CSV, commission_per_trade=4.95)
+        assert result["commissions"]["total_commission_usd"] == pytest.approx(9.90)
+
+    def test_zero_commission_per_trade(self):
+        result = analyze_uploaded_trades(self._VALID_CSV, commission_per_trade=0.0)
+        assert result["commissions"]["total_commission_usd"] == pytest.approx(0.0)
+
     def test_unmatched_sell_surfaces_as_warning(self):
         csv_data = (
             "date,symbol,action,price,shares\n"
@@ -330,3 +351,28 @@ class TestAnalyzeUploadedTradesDetailed:
         )
         result = analyze_uploaded_trades(csv_data)
         assert any(w["type"] == "unmatched_sell" for w in result["warnings"])
+
+
+def test_non_numeric_commission_per_trade_rejected(client):
+    # Simulate a Flask test client POST with a non-numeric commission
+    response = client.post(
+        '/analyze-trades',
+        json={
+            "csv_data": VALID_CSV,
+            "commission_per_trade": "notanumber"
+        }
+    )
+    assert response.status_code == 400
+    assert "commission_per_trade must be a number" in response.get_json().get("error", "")
+
+
+def test_negative_commission_per_trade_rejected(client):
+    response = client.post(
+        '/analyze-trades',
+        json={
+            "csv_data": VALID_CSV,
+            "commission_per_trade": -5
+        }
+    )
+    assert response.status_code == 400
+    assert "commission_per_trade must be a non-negative number" in response.get_json().get("error", "")

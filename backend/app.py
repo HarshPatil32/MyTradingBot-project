@@ -528,6 +528,7 @@ def _safe_filename(raw: str) -> str:
 @app.route('/analyze-trades', methods=['POST'])
 def analyze_trades():
     """Accept a CSV upload and return sanitized trade analysis."""
+
     try:
         if 'file' in request.files:
             upload = request.files['file']
@@ -539,19 +540,29 @@ def analyze_trades():
             try:
                 csv_data = raw_bytes.decode("utf-8")
             except UnicodeDecodeError:
-                # latin-1 is a 1:1 byte mapping so it never fails and preserves
-                # magic byte patterns needed by the binary-file safety check
                 csv_data = raw_bytes.decode("latin-1")
+            commission_per_trade = request.form.get("commission_per_trade", None)
         elif request.is_json:
             body = request.get_json(silent=True) or {}
             csv_data = body.get("csv_data", "")
             if not isinstance(csv_data, str):
                 return jsonify({"error": "csv_data must be a string."}), 400
+            commission_per_trade = body.get("commission_per_trade", None)
         else:
             return jsonify({"error": "Send a multipart file upload or JSON body with csv_data."}), 400
 
+        # Validate commission_per_trade if provided
+        if commission_per_trade is not None:
+            try:
+                commission_per_trade = float(commission_per_trade)
+            except (TypeError, ValueError):
+                return jsonify({"error": "commission_per_trade must be a number."}), 400
+            if commission_per_trade < 0:
+                return jsonify({"error": "commission_per_trade must be a non-negative number."}), 400
+            result = analyze_uploaded_trades(csv_data, commission_per_trade=commission_per_trade)
+        else:
+            result = analyze_uploaded_trades(csv_data)
 
-        result = analyze_uploaded_trades(csv_data)
         if isinstance(result, dict) and result.get("error"):
             return jsonify(result), 400
         return jsonify(result), 200

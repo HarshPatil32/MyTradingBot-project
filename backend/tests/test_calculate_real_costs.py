@@ -3,7 +3,7 @@ Tests for calculate_real_costs() adjusted return math.
 Covers multi-trade scenarios with mixed short/long term holds.
 """
 import pytest
-from transaction_costs import calculate_real_costs, CostConfig
+from transaction_costs import calculate_real_costs, calculate_commissions, CostConfig
 
 ACCOUNT_SIZE = 10_000.0
 
@@ -205,3 +205,56 @@ class TestCostSummaryIntegrity:
         assert cs["total_trading_costs_pct"] == pytest.approx(
             cs["total_trading_costs_usd"] / ACCOUNT_SIZE * 100, rel=1e-5
         )
+
+
+# ---------------------------------------------------------------------------
+# Direct calculate_commissions tests
+# ---------------------------------------------------------------------------
+
+class TestCalculateCommissions:
+    def test_flat_fee_default_one_dollar_per_leg(self):
+        # 6 trade legs (3 BUY + 3 SELL) × $1.00 = $6.00
+        result = calculate_commissions(MIXED_TRADES)
+        assert result["total_commission_usd"] == pytest.approx(6.0)
+        assert result["num_trades"] == 6
+        assert result["commission_rate"] == 1.0
+        assert result["is_pct"] is False
+
+    def test_custom_flat_fee(self):
+        # $4.95 per leg × 6 legs = $29.70
+        result = calculate_commissions(MIXED_TRADES, commission_per_trade=4.95)
+        assert result["total_commission_usd"] == pytest.approx(29.70)
+        assert result["commission_rate"] == 4.95
+
+    def test_zero_commission_fee(self):
+        result = calculate_commissions(MIXED_TRADES, commission_per_trade=0.0)
+        assert result["total_commission_usd"] == pytest.approx(0.0)
+        assert result["per_trade_avg_usd"] == pytest.approx(0.0)
+
+    def test_per_trade_avg_is_total_over_num_trades(self):
+        result = calculate_commissions(MIXED_TRADES, commission_per_trade=3.0)
+        assert result["per_trade_avg_usd"] == pytest.approx(
+            result["total_commission_usd"] / result["num_trades"]
+        )
+
+    def test_empty_trade_list_returns_zeros(self):
+        result = calculate_commissions([])
+        assert result["total_commission_usd"] == pytest.approx(0.0)
+        assert result["num_trades"] == 0
+        assert result["per_trade_avg_usd"] == pytest.approx(0.0)
+
+    def test_pct_mode_charges_fraction_of_trade_value(self):
+        # Single BUY: 10 shares @ $100 = $1000 trade value, 0.5% = $5.00
+        single_trade = [
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "BUY", "price": 100.0, "shares": 10},
+        ]
+        result = calculate_commissions(single_trade, commission_per_trade=0.005, commission_is_pct=True)
+        assert result["total_commission_usd"] == pytest.approx(5.0)
+        assert result["is_pct"] is True
+
+    def test_commissions_included_in_calculate_real_costs(self):
+        # Verify calculate_real_costs passes commission_per_trade through CostConfig
+        config = CostConfig(commission_per_trade=5.0, slippage_pct=0.0, spread_pct=0.0, apply_taxes=False)
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, config)
+        # 6 legs × $5.00 = $30.00
+        assert result["commissions"]["total_commission_usd"] == pytest.approx(30.0)
