@@ -3,7 +3,7 @@ Tests for calculate_real_costs() adjusted return math.
 Covers multi-trade scenarios with mixed short/long term holds.
 """
 import pytest
-from transaction_costs import calculate_real_costs, calculate_commissions, CostConfig
+from transaction_costs import calculate_real_costs, calculate_commissions, calculate_slippage, CostConfig
 
 ACCOUNT_SIZE = 10_000.0
 
@@ -258,3 +258,98 @@ class TestCalculateCommissions:
         result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, config)
         # 6 legs × $5.00 = $30.00
         assert result["commissions"]["total_commission_usd"] == pytest.approx(30.0)
+
+
+# ---------------------------------------------------------------------------
+# Per-trade slippage / market-impact breakdown
+# ---------------------------------------------------------------------------
+
+class TestSlippagePerTradeBreakdown:
+    def test_breakdown_entry_count_matches_trade_legs(self):
+        result = calculate_slippage(MIXED_TRADES)
+        assert len(result["per_trade_breakdown"]) == 6  # 3 BUY + 3 SELL
+
+    def test_breakdown_entry_contains_required_keys(self):
+        result = calculate_slippage(MIXED_TRADES)
+        entry = result["per_trade_breakdown"][0]
+        assert set(entry.keys()) == {"symbol", "action", "trade_value", "slippage_usd", "market_impact_pct"}
+
+    def test_slippage_usd_is_trade_value_times_rate(self):
+        # AAPL BUY: 10 shares × $100 = $1000 trade value; 0.8% → $8.00
+        result = calculate_slippage(MIXED_TRADES, slippage_pct=0.008)
+        aapl_buy = next(e for e in result["per_trade_breakdown"] if e["symbol"] == "AAPL" and e["action"] == "BUY")
+        assert aapl_buy["trade_value"] == pytest.approx(1000.0)
+        assert aapl_buy["slippage_usd"] == pytest.approx(8.0)
+
+    def test_market_impact_pct_is_slippage_pct_times_100(self):
+        rate = 0.008
+        result = calculate_slippage(MIXED_TRADES, slippage_pct=rate)
+        for entry in result["per_trade_breakdown"]:
+            assert entry["market_impact_pct"] == pytest.approx(rate * 100, rel=1e-5)
+
+    def test_total_slippage_equals_sum_of_breakdown(self):
+        result = calculate_slippage(MIXED_TRADES)
+        breakdown_total = sum(e["slippage_usd"] for e in result["per_trade_breakdown"])
+        assert result["total_slippage_usd"] == pytest.approx(breakdown_total, rel=1e-5)
+
+    def test_zero_slippage_pct_returns_zero_usd_and_pct(self):
+        result = calculate_slippage(MIXED_TRADES, slippage_pct=0.0)
+        assert result["total_slippage_usd"] == pytest.approx(0.0)
+        for entry in result["per_trade_breakdown"]:
+            assert entry["slippage_usd"] == pytest.approx(0.0)
+            assert entry["market_impact_pct"] == pytest.approx(0.0)
+
+    def test_empty_trade_list_returns_empty_breakdown(self):
+        result = calculate_slippage([])
+        assert result["per_trade_breakdown"] == []
+        assert result["total_slippage_usd"] == pytest.approx(0.0)
+        assert result["num_trades"] == 0
+
+    def test_preset_low_sets_expected_slippage_pct(self):
+        result = calculate_slippage(MIXED_TRADES, preset="low")
+        assert result["slippage_pct_used"] == pytest.approx(0.003)
+        for entry in result["per_trade_breakdown"]:
+            assert entry["market_impact_pct"] == pytest.approx(0.3, rel=1e-5)
+
+    def test_breakdown_included_in_calculate_real_costs_output(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        assert "per_trade_breakdown" in result["slippage"]
+        assert len(result["slippage"]["per_trade_breakdown"]) == 6
+
+    def test_negative_trade_value_results_in_zero_slippage_and_pct(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "ERR", "action": "BUY", "price": -100.0, "shares": 10},
+        ]
+        result = calculate_slippage(trades)
+        entry = result["per_trade_breakdown"][0]
+        # trade_value is always abs(price * shares)
+        assert entry["trade_value"] == pytest.approx(1000.0)
+        assert entry["slippage_usd"] == pytest.approx(8.0)  # 1000 * 0.008 default
+        assert entry["market_impact_pct"] == pytest.approx(0.8)
+
+    def test_zero_trade_value_results_in_zero_slippage_and_pct(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "ZERO", "action": "BUY", "price": 0.0, "shares": 10},
+        ]
+        result = calculate_slippage(trades)
+        entry = result["per_trade_breakdown"][0]
+        assert entry["trade_value"] == 0.0
+        assert entry["slippage_usd"] == 0.0
+        assert entry["market_impact_pct"] == 0.0
+
+    def test_invalid_slippage_pct_raises(self):
+        with pytest.raises(ValueError):
+            calculate_slippage(MIXED_TRADES, slippage_pct=-0.1)
+        with pytest.raises(ValueError):
+            calculate_slippage(MIXED_TRADES, slippage_pct=2.0)
+
+    def test_single_trade_breakdown(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "BUY", "price": 100.0, "shares": 1},
+        ]
+        result = calculate_slippage(trades, slippage_pct=0.01)
+        assert len(result["per_trade_breakdown"]) == 1
+        entry = result["per_trade_breakdown"][0]
+        assert entry["trade_value"] == pytest.approx(100.0)
+        assert entry["slippage_usd"] == pytest.approx(1.0)
+        assert entry["market_impact_pct"] == pytest.approx(1.0)

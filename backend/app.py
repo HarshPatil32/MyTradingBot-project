@@ -94,6 +94,7 @@ _MB = 1024 * 1024
 _MAX_UPLOAD_BYTES = 5 * _MB
 
 # Try to import trading modules with error handling
+
 try:
     from test_against_SP import get_spy_investment, generate_spy_monthly_performance
     from MACD_trading import backtest_strategy_MACD, generate_monthly_performance
@@ -102,6 +103,10 @@ try:
 except ImportError as e:
     logging.error(f"Trading modules not available: {e}")
     TRADING_MODULES_AVAILABLE = False
+    def get_spy_investment(*args, **kwargs):
+        raise RuntimeError("Trading modules not available")
+    def generate_spy_monthly_performance(*args, **kwargs):
+        raise RuntimeError("Trading modules not available")
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = _MAX_UPLOAD_BYTES
@@ -253,11 +258,12 @@ def MACD_strategy():
         logger.error(f"MACD strategy error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+
 @app.route('/spy-investment', methods=['GET'])
 def spy_investment():
     if not TRADING_MODULES_AVAILABLE:
         return jsonify({"error": "Trading modules not available. Please check server setup."}), 500
-        
+
     try:
         start_date_str = request.args.get('start_date')
         end_date_str = request.args.get('end_date')
@@ -274,18 +280,28 @@ def spy_investment():
             return jsonify({"error": "Invalid date format. Please provide dates in ISO format (YYYY-MM-DD)."}), 400
 
         logger.info(f"Processing SPY investment for dates: {start_date_str} to {end_date_str}")
-        
+
         final_balance = get_spy_investment(start_date, end_date, initial_balance)
+        # If get_spy_investment returns an error tuple, handle it
+        if isinstance(final_balance, tuple) and len(final_balance) == 2 and isinstance(final_balance[1], int):
+            error_msg, status = final_balance
+            return jsonify({"error": error_msg}), status
+
         monthly_data = generate_spy_monthly_performance(start_date, end_date, initial_balance)
-        
+
         return jsonify({
             "final_balance": final_balance,
             "monthly_performance": monthly_data
         }), 200
-        
+
     except Exception as e:
         logger.error(f"SPY investment error: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+# Expose for patching in tests only if available
+import sys
+sys.modules[__name__].get_spy_investment = get_spy_investment
+sys.modules[__name__].generate_spy_monthly_performance = generate_spy_monthly_performance
 
 def generate_selection_reason(score):
     """Give a reason for why it chose the stock"""

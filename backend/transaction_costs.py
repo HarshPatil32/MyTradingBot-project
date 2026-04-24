@@ -306,26 +306,50 @@ def calculate_slippage(
     if preset and preset in _SLIPPAGE_PRESETS:
         slippage_pct = _SLIPPAGE_PRESETS[preset]
 
+    # Validate slippage_pct
+    if not isinstance(slippage_pct, (int, float)) or slippage_pct < 0 or slippage_pct > 1:
+        raise ValueError(f"slippage_pct must be between 0 and 1, got {slippage_pct}")
+
     normalised, is_summary = _to_normalised(trades)
+
+    def _market_impact_pct(slippage_usd, trade_value):
+        if not trade_value or trade_value <= 0:
+            return 0.0
+        return (slippage_usd / trade_value) * 100
 
     if not normalised:
         return {
-            "total_slippage_usd": 0.0,
-            "per_trade_avg_usd":  0.0,
-            "num_trades":         0,
-            "slippage_pct_used":  slippage_pct,
-            "preset":             preset,
+            "total_slippage_usd":  0.0,
+            "per_trade_avg_usd":   0.0,
+            "num_trades":          0,
+            "slippage_pct_used":   slippage_pct,
+            "preset":              preset,
+            "per_trade_breakdown": [],
         }
 
-    total = sum(nt.trade_value * slippage_pct for nt in normalised)
+    per_trade_breakdown = []
+    for nt in normalised:
+        tv = nt.trade_value
+        slippage_usd = round(tv * slippage_pct, 4) if tv > 0 else 0.0
+        mipct = _market_impact_pct(slippage_usd, tv)
+        per_trade_breakdown.append({
+            "symbol": nt.symbol,
+            "action": nt.action,
+            "trade_value": round(tv, 4),
+            "slippage_usd": slippage_usd,
+            "market_impact_pct": round(mipct, 6),
+        })
+
+    total = sum(entry["slippage_usd"] for entry in per_trade_breakdown)
     num   = len(normalised)
 
     return {
-        "total_slippage_usd": round(total, 4),
-        "per_trade_avg_usd":  round(total / num, 4),
-        "num_trades":         num,
-        "slippage_pct_used":  slippage_pct,
-        "preset":             preset,
+        "total_slippage_usd":  round(total, 4),
+        "per_trade_avg_usd":   round(total / num, 4) if num else 0.0,
+        "num_trades":          num,
+        "slippage_pct_used":   slippage_pct,
+        "preset":              preset,
+        "per_trade_breakdown": per_trade_breakdown,
     }
 
 

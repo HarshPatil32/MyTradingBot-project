@@ -16,7 +16,7 @@ import statistics
 from datetime import datetime
 from typing import Any, Sequence
 
-from transaction_costs import calculate_commissions, DEFAULT_COMMISSION_PER_TRADE
+from transaction_costs import calculate_commissions, calculate_slippage, DEFAULT_COMMISSION_PER_TRADE, DEFAULT_SLIPPAGE_PCT
 
 def _normalize_action(action):
     """Normalize trade action to uppercase, handling None and whitespace."""
@@ -511,7 +511,7 @@ def calculate_pnl(trades: list[dict]) -> dict:
     }
 
 
-def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT_COMMISSION_PER_TRADE) -> dict:
+def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT_COMMISSION_PER_TRADE, slippage_pct: float = DEFAULT_SLIPPAGE_PCT) -> dict:
     """Main entry point: sanitize, detect format, parse, validate, and return a normalised trade dict for real trade history uploads."""
     try:
         clean = sanitize_csv(csv_data)
@@ -531,6 +531,7 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
         notices = [i for i in all_issues if i.get("level") in INFO_LEVELS]
         pnl = calculate_pnl(trades) if trades else {}
         commissions = calculate_commissions(trades, commission_per_trade=commission_per_trade) if trades else {}
+        slippage = calculate_slippage(trades, slippage_pct=slippage_pct) if trades else {}
         result = {
             "format": fmt,
             "trades": trades,
@@ -538,6 +539,7 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
             "notices": notices,
             "pnl": pnl,
             "commissions": commissions,
+            "slippage": slippage,
         }
         print("DEBUG: Returning from detailed (main try):", result)
         return result
