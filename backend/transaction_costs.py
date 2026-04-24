@@ -424,15 +424,17 @@ def calculate_taxes(
     short_term_tax_rate: float = DEFAULT_SHORT_TERM_TAX_RATE,
     long_term_tax_rate:  float = DEFAULT_LONG_TERM_TAX_RATE,
     apply_taxes: bool = True,
+    offset_losses: bool = True,
 ) -> dict:
     """
-    Estimate capital-gains tax liability on profitable trades.
+    Estimate capital-gains tax liability on trades.
 
-    Trades held < SHORT_TERM_HOLD_DAYS are taxed at the short-term rate;
-    trades held >= SHORT_TERM_HOLD_DAYS at the long-term rate.
+    Trades held <= 365 days are taxed at the short-term rate;
+    trades held > 365 days at the long-term rate (IRS: more than 1 year).
     If hold duration is unknown (e.g. summary input), short-term rate is used.
 
-    Losses are counted but cannot currently offset gains (conservative approach).
+    By default, losses offset gains within each category (short/long term).
+    Set offset_losses=False to use conservative approach (no offsetting).
     """
     if not apply_taxes:
         return {
@@ -450,34 +452,58 @@ def calculate_taxes(
             "long_term_tax_rate_used":  long_term_tax_rate,
         }
 
+    from datetime import timedelta
     normalised, is_summary = _to_normalised(trades)
 
+    short_term_net = 0.0
+    long_term_net = 0.0
     short_gains = 0.0
-    long_gains  = 0.0
-    total_losses = 0.0
+    long_gains = 0.0
+    short_losses = 0.0
+    long_losses = 0.0
     n_win = 0
     n_loss = 0
+    n_short = 0
+    n_long = 0
 
     for nt in normalised:
-        if nt.profit is None:
+        if nt.profit is None or nt.hold_days is None or nt.hold_days < 0:
             continue
-        if nt.profit > 0:
-            n_win += 1
-            hold = nt.hold_days if nt.hold_days is not None else 0
-            if hold > SHORT_TERM_HOLD_DAYS:
-                long_gains  += nt.profit
+        hold = nt.hold_days
+        if hold > 365:
+            n_long += 1
+            if nt.profit > 0:
+                long_gains += nt.profit
+                long_term_net += nt.profit
+                n_win += 1
             else:
-                short_gains += nt.profit
+                long_losses += abs(nt.profit)
+                long_term_net += nt.profit
+                n_loss += 1
         else:
-            n_loss += 1
-            total_losses += abs(nt.profit)
+            n_short += 1
+            if nt.profit > 0:
+                short_gains += nt.profit
+                short_term_net += nt.profit
+                n_win += 1
+            else:
+                short_losses += abs(nt.profit)
+                short_term_net += nt.profit
+                n_loss += 1
 
-    short_tax = short_gains * short_term_tax_rate
-    long_tax  = long_gains  * long_term_tax_rate
+    if offset_losses:
+        short_taxable = max(short_term_net, 0.0)
+        long_taxable = max(long_term_net, 0.0)
+    else:
+        short_taxable = short_gains
+        long_taxable = long_gains
+
+    short_tax = short_taxable * short_term_tax_rate
+    long_tax = long_taxable * long_term_tax_rate
     total_tax = short_tax + long_tax
     total_gains = short_gains + long_gains
-
-    effective_rate = (total_tax / total_gains) if total_gains > 0 else 0.0
+    total_losses = short_losses + long_losses
+    effective_rate = (total_tax / (short_taxable + long_taxable)) if (short_taxable + long_taxable) > 0 else 0.0
 
     return {
         "total_tax_usd":            round(total_tax,     4),
@@ -492,6 +518,7 @@ def calculate_taxes(
         "effective_tax_rate":       round(effective_rate, 6),
         "short_term_tax_rate_used": short_term_tax_rate,
         "long_term_tax_rate_used":  long_term_tax_rate,
+        "offset_losses":            offset_losses,
     }
 
 
@@ -503,6 +530,7 @@ def calculate_real_costs(
     trades: Any,
     account_size: float,
     config: CostConfig | None = None,
+    offset_losses: bool = True,
 ) -> dict:
     """
     Master function — run all four cost components and return a unified
@@ -553,6 +581,7 @@ def calculate_real_costs(
         short_term_tax_rate=config.short_term_tax_rate,
         long_term_tax_rate=config.long_term_tax_rate,
         apply_taxes=config.apply_taxes,
+        offset_losses=offset_losses,
     )
 
     # Aggregate

@@ -76,24 +76,41 @@ class TestGrossReturn:
 # Tax calculation for mixed holds
 
 class TestTaxCalculation:
-    def test_short_term_gains_taxed_at_37_pct(self):
-        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs())
+    def test_short_term_gains_taxed_at_37_pct_conservative(self):
+        # Conservative: no loss offsetting
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=False)
         taxes = result["taxes"]
         assert taxes["short_term_gains_usd"] == pytest.approx(300.0)
         assert taxes["short_term_tax_usd"] == pytest.approx(111.0)  # 300 * 0.37
 
+    def test_short_term_gains_taxed_at_37_pct_offset(self):
+        # Default: loss offsetting
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=True)
+        taxes = result["taxes"]
+        # Short-term net = 300 - 100 = 200, tax = 74
+        assert taxes["short_term_gains_usd"] == pytest.approx(300.0)
+        assert taxes["short_term_tax_usd"] == pytest.approx(74.0)
+
     def test_long_term_gains_taxed_at_20_pct(self):
-        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs())
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=False)
         taxes = result["taxes"]
         assert taxes["long_term_gains_usd"] == pytest.approx(400.0)
         assert taxes["long_term_tax_usd"] == pytest.approx(80.0)  # 400 * 0.20
 
     def test_losses_are_tracked_but_do_not_offset_gains(self):
         # Conservative: losses are recorded but not netted against gains.
-        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs())
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=False)
         taxes = result["taxes"]
         assert taxes["total_losses_usd"] == pytest.approx(100.0)
         assert taxes["total_tax_usd"] == pytest.approx(191.0)  # still full 111+80
+
+    def test_losses_are_offset_against_gains(self):
+        # Default: loss offsetting
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=True)
+        taxes = result["taxes"]
+        # short_term_net = 200, long_term_net = 400
+        assert taxes["total_losses_usd"] == pytest.approx(100.0)
+        assert taxes["total_tax_usd"] == pytest.approx(154.0)  # 74 + 80
 
     def test_exactly_365_day_hold_is_short_term(self):
         # IRS rule: hold must be MORE than 12 months (> 365 days) for long-term.
@@ -102,7 +119,7 @@ class TestTaxCalculation:
             {"date": "2023-01-01", "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
             {"date": "2024-01-01", "symbol": "AAPL", "action": "SELL", "price": 120.0, "shares": 10},
         ]
-        result = calculate_real_costs(trades, ACCOUNT_SIZE, _no_trading_costs())
+        result = calculate_real_costs(trades, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=True)
         taxes = result["taxes"]
         assert taxes["short_term_tax_usd"] == pytest.approx(74.0)  # $200 * 0.37
         assert taxes["long_term_tax_usd"] == pytest.approx(0.0)
@@ -113,7 +130,7 @@ class TestTaxCalculation:
             {"date": "2024-01-01", "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
             {"date": "2025-01-02", "symbol": "AAPL", "action": "SELL", "price": 120.0, "shares": 10},
         ]
-        result = calculate_real_costs(trades, ACCOUNT_SIZE, _no_trading_costs())
+        result = calculate_real_costs(trades, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=True)
         taxes = result["taxes"]
         assert taxes["long_term_tax_usd"] == pytest.approx(40.0)  # $200 * 0.20
         assert taxes["short_term_tax_usd"] == pytest.approx(0.0)
@@ -163,23 +180,23 @@ class TestAdjustedReturnMath:
         assert adj["after_costs_and_tax_pct"] < adj["after_costs_pct"]
 
     def test_exact_after_tax_return_no_trading_friction(self):
-        # gross=$600 (6.0%), tax=$191 → after_tax = $409 = 4.09%
-        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs())
+        # gross=$600 (6.0%), tax=$154 → after_tax = $446 = 4.46%
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=True)
         adj = result["adjusted_returns"]
         assert adj["gross_return_pct"] == pytest.approx(6.0)
-        assert adj["after_costs_and_tax_profit_usd"] == pytest.approx(409.0)
-        assert adj["after_costs_and_tax_pct"] == pytest.approx(4.09, rel=1e-3)
+        assert adj["after_costs_and_tax_profit_usd"] == pytest.approx(446.0)
+        assert adj["after_costs_and_tax_pct"] == pytest.approx(4.46, rel=1e-3)
 
     def test_exact_after_all_costs_return_default_config(self):
-        # trading_costs=$76 (0.76%), tax=$191 → total=$267 (2.67%)
+        # trading_costs=$76 (0.76%), tax=$154 → total=$230 (2.30%)
         # after_costs_pct=5.24%, after_costs_and_tax_pct=3.33%
-        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, offset_losses=True)
         adj = result["adjusted_returns"]
         cs = result["cost_summary"]
         assert cs["total_trading_costs_usd"] == pytest.approx(76.0, rel=1e-3)
-        assert cs["total_all_costs_usd"] == pytest.approx(267.0, rel=1e-3)
+        assert cs["total_all_costs_usd"] == pytest.approx(230.0, rel=1e-3)
         assert adj["after_costs_pct"] == pytest.approx(5.24, rel=1e-3)
-        assert adj["after_costs_and_tax_pct"] == pytest.approx(3.33, rel=1e-3)
+        assert adj["after_costs_and_tax_pct"] == pytest.approx(3.7, rel=1e-3)
 
 
 # Cost summary integrity
@@ -468,3 +485,29 @@ class TestSpreadPerTradeBreakdown:
         assert spread["spread_pct_used"] == pytest.approx(0.002)
         assert "per_trade_breakdown" in spread
         assert len(spread["per_trade_breakdown"]) == 2  # BUY + SELL legs
+
+
+# ---------------------------------------------------------------------------
+# Tax edge cases
+# ---------------------------------------------------------------------------
+
+class TestTaxEdgeCases:
+    def test_zero_gains_no_divide_by_zero(self):
+        # All trades are losses, so total gains = 0
+        trades = [
+            {"date": "2024-01-01", "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
+            {"date": "2024-06-30", "symbol": "AAPL", "action": "SELL", "price": 90.0,  "shares": 10},
+            {"date": "2024-01-01", "symbol": "MSFT", "action": "BUY",  "price": 200.0, "shares": 5},
+            {"date": "2024-06-30", "symbol": "MSFT", "action": "SELL", "price": 180.0, "shares": 5},
+        ]
+        config = CostConfig(
+            commission_per_trade=0.0,
+            slippage_pct=0.0,
+            spread_pct=0.0,
+            apply_taxes=True,
+        )
+        result = calculate_real_costs(trades, ACCOUNT_SIZE, config)
+        taxes = result["taxes"]
+        assert taxes["total_gains_usd"] == 0.0
+        assert taxes["total_tax_usd"] == 0.0
+        assert taxes["effective_tax_rate"] == 0.0
