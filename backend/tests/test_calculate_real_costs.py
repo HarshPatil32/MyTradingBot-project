@@ -3,7 +3,7 @@ Tests for calculate_real_costs() adjusted return math.
 Covers multi-trade scenarios with mixed short/long term holds.
 """
 import pytest
-from transaction_costs import calculate_real_costs, calculate_commissions, calculate_slippage, CostConfig
+from transaction_costs import calculate_real_costs, calculate_commissions, calculate_slippage, calculate_bid_ask_spread, CostConfig
 
 ACCOUNT_SIZE = 10_000.0
 
@@ -353,3 +353,118 @@ class TestSlippagePerTradeBreakdown:
         assert entry["trade_value"] == pytest.approx(100.0)
         assert entry["slippage_usd"] == pytest.approx(1.0)
         assert entry["market_impact_pct"] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Per-trade bid-ask spread breakdown
+# ---------------------------------------------------------------------------
+
+class TestSpreadPerTradeBreakdown:
+    def test_breakdown_entry_count_matches_trade_legs(self):
+        result = calculate_bid_ask_spread(MIXED_TRADES)
+        assert len(result["per_trade_breakdown"]) == 6  # 3 BUY + 3 SELL
+
+    def test_breakdown_entry_contains_required_keys(self):
+        result = calculate_bid_ask_spread(MIXED_TRADES)
+        entry = result["per_trade_breakdown"][0]
+        assert set(entry.keys()) == {"symbol", "action", "trade_value", "round_trip_spread_usd", "spread_rate"}
+
+    def test_round_trip_spread_usd_is_trade_value_times_rate(self):
+        # AAPL BUY: 10 shares × $100 = $1000 trade value; 0.2% → $2.00
+        result = calculate_bid_ask_spread(MIXED_TRADES, spread_pct=0.002)
+        aapl_buy = next(e for e in result["per_trade_breakdown"] if e["symbol"] == "AAPL" and e["action"] == "BUY")
+        assert aapl_buy["trade_value"] == pytest.approx(1000.0)
+        assert aapl_buy["round_trip_spread_usd"] == pytest.approx(2.0)
+
+    def test_spread_rate_is_spread_pct(self):
+        rate = 0.002
+        result = calculate_bid_ask_spread(MIXED_TRADES, spread_pct=rate)
+        for entry in result["per_trade_breakdown"]:
+            assert entry["spread_rate"] == pytest.approx(rate, rel=1e-5)
+
+    def test_total_spread_equals_sum_of_breakdown(self):
+        result = calculate_bid_ask_spread(MIXED_TRADES)
+        breakdown_total = sum(e["round_trip_spread_usd"] for e in result["per_trade_breakdown"])
+        assert result["total_spread_usd"] == pytest.approx(breakdown_total, rel=1e-5)
+
+    def test_zero_spread_pct_returns_zero_usd_and_rate(self):
+        result = calculate_bid_ask_spread(MIXED_TRADES, spread_pct=0.0)
+        assert result["total_spread_usd"] == pytest.approx(0.0)
+        for entry in result["per_trade_breakdown"]:
+            assert entry["round_trip_spread_usd"] == pytest.approx(0.0)
+            assert entry["spread_rate"] == pytest.approx(0.0)
+
+    def test_empty_trade_list_returns_empty_breakdown(self):
+        result = calculate_bid_ask_spread([])
+        assert result["per_trade_breakdown"] == []
+        assert result["total_spread_usd"] == pytest.approx(0.0)
+        assert result["num_trades"] == 0
+
+    def test_preset_low_sets_expected_spread_pct(self):
+        result = calculate_bid_ask_spread(MIXED_TRADES, preset="low")
+        assert result["spread_pct_used"] == pytest.approx(0.001)
+        for entry in result["per_trade_breakdown"]:
+            assert entry["spread_rate"] == pytest.approx(0.001, rel=1e-5)
+
+    def test_breakdown_included_in_calculate_real_costs_output(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        assert "per_trade_breakdown" in result["bid_ask_spread"]
+        assert len(result["bid_ask_spread"]["per_trade_breakdown"]) == 6
+
+    def test_zero_trade_value_results_in_zero_spread_and_rate(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "ZERO", "action": "BUY", "price": 0.0, "shares": 10},
+        ]
+        result = calculate_bid_ask_spread(trades)
+        entry = result["per_trade_breakdown"][0]
+        assert entry["trade_value"] == 0.0
+        assert entry["round_trip_spread_usd"] == 0.0
+        # spread_rate should match the input spread_pct (default 0.002)
+        assert entry["spread_rate"] == pytest.approx(0.002)
+    def test_negative_spread_pct_raises(self):
+        with pytest.raises(ValueError):
+            calculate_bid_ask_spread(MIXED_TRADES, spread_pct=-0.01)
+        with pytest.raises(ValueError):
+            calculate_bid_ask_spread(MIXED_TRADES, spread_pct=1.5)
+
+    def test_mixed_buy_sell_legs(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "BUY", "price": 100.0, "shares": 10},
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "SELL", "price": 110.0, "shares": 5},
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "SELL", "price": 120.0, "shares": 5},
+        ]
+        result = calculate_bid_ask_spread(trades, spread_pct=0.002)
+        assert len(result["per_trade_breakdown"]) == 3
+        for entry in result["per_trade_breakdown"]:
+            assert entry["spread_rate"] == pytest.approx(0.002)
+
+    def test_invalid_spread_pct_raises(self):
+        with pytest.raises(ValueError):
+            calculate_bid_ask_spread(MIXED_TRADES, spread_pct=-0.1)
+        with pytest.raises(ValueError):
+            calculate_bid_ask_spread(MIXED_TRADES, spread_pct=2.0)
+
+    def test_single_trade_breakdown(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "BUY", "price": 100.0, "shares": 1},
+        ]
+        result = calculate_bid_ask_spread(trades, spread_pct=0.002)
+        assert len(result["per_trade_breakdown"]) == 1
+        entry = result["per_trade_breakdown"][0]
+        assert entry["trade_value"] == pytest.approx(100.0)
+        assert entry["round_trip_spread_usd"] == pytest.approx(0.2)
+        assert entry["spread_rate"] == pytest.approx(0.002)
+
+    def test_spread_included_in_analyze_uploaded_trades(self):
+        csv_data = (
+            "date,symbol,action,price,shares\n"
+            "2024-01-01,AAPL,BUY,100.0,10\n"
+            "2024-06-30,AAPL,SELL,130.0,10\n"
+        )
+        from csv_analyzer import analyze_uploaded_trades
+        result = analyze_uploaded_trades(csv_data, spread_pct=0.002)
+        assert "bid_ask_spread" in result
+        spread = result["bid_ask_spread"]
+        assert spread["spread_pct_used"] == pytest.approx(0.002)
+        assert "per_trade_breakdown" in spread
+        assert len(spread["per_trade_breakdown"]) == 2  # BUY + SELL legs

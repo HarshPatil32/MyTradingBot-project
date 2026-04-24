@@ -363,33 +363,55 @@ def calculate_bid_ask_spread(
     preset: str | None = None,
 ) -> dict:
     """
-    Calculate bid-ask spread costs.
+    Calculate round-trip bid-ask spread costs for each trade leg.
 
-    Fixed cost of crossing the market
+    Returns a dict with total and per-trade breakdown. Each entry in per_trade_breakdown includes:
+      - symbol
+      - action
+      - trade_value
+      - round_trip_spread_usd (cost for this leg)
+      - spread_rate (the spread_pct used)
     """
     if preset and preset in _SPREAD_PRESETS:
         spread_pct = _SPREAD_PRESETS[preset]
+
+    if not isinstance(spread_pct, (int, float)) or spread_pct < 0 or spread_pct > 1:
+        raise ValueError(f"spread_pct must be between 0 and 1, got {spread_pct}")
 
     normalised, is_summary = _to_normalised(trades)
 
     if not normalised:
         return {
-            "total_spread_usd": 0.0,
-            "per_trade_avg_usd": 0.0,
-            "num_trades":        0,
-            "spread_pct_used":   spread_pct,
-            "preset":            preset,
+            "total_spread_usd":    0.0,
+            "per_trade_avg_usd":   0.0,
+            "num_trades":          0,
+            "spread_pct_used":     spread_pct,
+            "preset":              preset,
+            "per_trade_breakdown": [],
         }
 
-    total = sum(nt.trade_value * spread_pct for nt in normalised)
+    per_trade_breakdown = []
+    for nt in normalised:
+        tv = nt.trade_value
+        round_trip_spread_usd = round(tv * spread_pct, 4) if tv > 0 else 0.0
+        per_trade_breakdown.append({
+            "symbol":                nt.symbol,
+            "action":                nt.action,
+            "trade_value":           round(tv, 4),
+            "round_trip_spread_usd": round_trip_spread_usd,
+            "spread_rate":           spread_pct,
+        })
+
+    total = sum(entry["round_trip_spread_usd"] for entry in per_trade_breakdown)
     num   = len(normalised)
 
     return {
-        "total_spread_usd": round(total, 4),
-        "per_trade_avg_usd": round(total / num, 4),
-        "num_trades":        num,
-        "spread_pct_used":   spread_pct,
-        "preset":            preset,
+        "total_spread_usd":    round(total, 4),
+        "per_trade_avg_usd":   round(total / num, 4),
+        "num_trades":          num,
+        "spread_pct_used":     spread_pct,
+        "preset":              preset,
+        "per_trade_breakdown": per_trade_breakdown,
     }
 
 
