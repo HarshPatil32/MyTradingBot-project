@@ -534,3 +534,69 @@ class TestTaxEdgeCases:
         assert taxes["total_gains_usd"] == 0.0
         assert taxes["total_tax_usd"] == 0.0
         assert taxes["effective_tax_rate"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Plain-English summary
+# ---------------------------------------------------------------------------
+
+class TestPlainEnglishSummary:
+    def test_summary_present_in_cost_summary(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        assert "plain_english_summary" in result["cost_summary"]
+        assert isinstance(result["cost_summary"]["plain_english_summary"], str)
+
+    def test_profitable_scenario_mentions_kept_phrase(self):
+        # gross $600, net ~$333 after all costs/taxes → kept about half
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, offset_losses=True)
+        summary = result["cost_summary"]["plain_english_summary"]
+        assert "kept" in summary.lower()
+
+    def test_profitable_scenario_mentions_gross_and_net_amounts(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=True)
+        # gross $600, net $446 after tax only
+        summary = result["cost_summary"]["plain_english_summary"]
+        assert "600" in summary
+        assert "446" in summary
+
+    def test_zero_costs_summary_mentions_nearly_all(self):
+        # With zero costs the net equals gross: fraction_kept = 1.0 → "nearly all"
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_costs())
+        summary = result["cost_summary"]["plain_english_summary"]
+        assert "nearly all" in summary.lower()
+
+    def test_loss_scenario_mentions_loss(self):
+        losing_trades = [
+            {"date": "2024-01-01", "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
+            {"date": "2024-06-30", "symbol": "AAPL", "action": "SELL", "price":  80.0, "shares": 10},
+        ]
+        result = calculate_real_costs(losing_trades, ACCOUNT_SIZE, _no_costs())
+        summary = result["cost_summary"]["plain_english_summary"]
+        assert "lost" in summary.lower()
+
+    def test_wipeout_scenario_mentions_wiped_out(self):
+        # Make a small gross profit but apply heavy costs so net goes negative
+        tiny_gain_trades = [
+            {"date": "2024-01-01", "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
+            {"date": "2024-06-30", "symbol": "AAPL", "action": "SELL", "price": 101.0, "shares": 10},
+        ]
+        heavy_cost_config = CostConfig(
+            commission_per_trade=0.0,
+            slippage_pct=0.10,  # 10% per leg = far exceeds $10 gain
+            spread_pct=0.0,
+            apply_taxes=False,  # isolate to trading costs only
+        )
+        result = calculate_real_costs(tiny_gain_trades, ACCOUNT_SIZE, heavy_cost_config)
+        cs = result["cost_summary"]
+        # Confirm we actually are in wipeout territory before checking the string
+        assert cs["total_trading_costs_usd"] > result["adjusted_returns"]["gross_profit_usd"]
+        assert "wiped out" in cs["plain_english_summary"].lower()
+
+    def test_breakeven_scenario_does_not_say_lost(self):
+        breakeven_trades = [
+            {"date": "2024-01-01", "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
+            {"date": "2024-06-30", "symbol": "AAPL", "action": "SELL", "price": 100.0, "shares": 10},
+        ]
+        result = calculate_real_costs(breakeven_trades, ACCOUNT_SIZE, _no_costs())
+        summary = result["cost_summary"]["plain_english_summary"]
+        assert "lost" not in summary.lower()

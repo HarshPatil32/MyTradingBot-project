@@ -523,7 +523,57 @@ def calculate_taxes(
 
 
 # ---------------------------------------------------------------------------
-# 5. Main entry-point: calculate_real_costs
+# 5. Plain-English cost summary helper
+# ---------------------------------------------------------------------------
+
+def _plain_english_summary(
+    gross_profit_usd: float,
+    after_costs_and_tax_profit_usd: float,
+    total_all_costs_usd: float,
+    gross_return_pct: float,
+    after_costs_and_tax_pct: float,
+) -> str:
+    """Turn the cost numbers into a single sentence a non-expert can understand."""
+    gross = gross_profit_usd
+    net   = after_costs_and_tax_profit_usd
+    costs = total_all_costs_usd
+
+    if gross == 0.0:
+        return "You broke even before costs. Costs and taxes reduced your return."
+
+    if gross < 0:
+        return (
+            f"You lost ${abs(gross):.2f} before costs. "
+            f"Costs and taxes added ${costs:.2f} more, for a total loss of ${abs(net):.2f}."
+        )
+
+    if net <= 0:
+        return (
+            f"You made ${gross:.2f} on paper ({gross_return_pct:.1f}%), but costs and taxes "
+            f"of ${costs:.2f} wiped out the profit, leaving a net loss of ${abs(net):.2f}."
+        )
+
+    fraction_kept = net / gross
+    if fraction_kept >= 0.90:
+        kept_phrase = "nearly all"
+    elif fraction_kept >= 0.65:
+        kept_phrase = "most"
+    elif fraction_kept >= 0.45:
+        kept_phrase = "about half"
+    elif fraction_kept >= 0.25:
+        kept_phrase = "less than half"
+    else:
+        kept_phrase = "only a small portion"
+
+    return (
+        f"You made ${gross:.2f} before costs ({gross_return_pct:.1f}%). "
+        f"Costs and taxes took ${costs:.2f}, so you kept {kept_phrase} — "
+        f"${net:.2f} ({after_costs_and_tax_pct:.1f}% net return)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. Main entry-point: calculate_real_costs
 # ---------------------------------------------------------------------------
 
 def calculate_real_costs(
@@ -636,6 +686,13 @@ def calculate_real_costs(
             "total_tax_usd":           round(total_tax_usd,             4),
             "total_all_costs_usd":     round(total_all_costs_usd,       4),
             "total_all_costs_pct":     round(total_all_costs_pct,       4),
+            "plain_english_summary":   _plain_english_summary(
+                gross_profit_usd,
+                after_costs_and_tax_profit_usd,
+                total_all_costs_usd,
+                gross_return_pct,
+                after_costs_and_tax_pct,
+            ),
             "breakdown_pct": {
                 "commissions":   round(comm["total_commission_usd"]   / account_size * 100, 4) if account_size else 0,
                 "slippage":      round(slip["total_slippage_usd"]     / account_size * 100, 4) if account_size else 0,
