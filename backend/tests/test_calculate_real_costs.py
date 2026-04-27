@@ -202,6 +202,29 @@ class TestAdjustedReturnMath:
 # Cost summary integrity
 
 class TestCostSummaryIntegrity:
+    def test_cost_summary_contains_gross_return(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_costs())
+        cs = result["cost_summary"]
+        assert cs["gross_return_pct"] == pytest.approx(6.0)
+
+    def test_cost_summary_after_costs_return_matches_adjusted_returns(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        cs = result["cost_summary"]
+        adj = result["adjusted_returns"]
+        assert cs["after_costs_return_pct"] == pytest.approx(adj["after_costs_pct"], rel=1e-5)
+
+    def test_cost_summary_after_tax_return_matches_adjusted_returns(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        cs = result["cost_summary"]
+        adj = result["adjusted_returns"]
+        assert cs["after_tax_return_pct"] == pytest.approx(adj["after_costs_and_tax_pct"], rel=1e-5)
+
+    def test_cost_summary_zero_costs_all_returns_equal_gross(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_costs())
+        cs = result["cost_summary"]
+        assert cs["after_costs_return_pct"] == pytest.approx(cs["gross_return_pct"])
+        assert cs["after_tax_return_pct"] == pytest.approx(cs["gross_return_pct"])
+
     def test_total_all_costs_equals_trading_costs_plus_tax(self):
         result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
         cs = result["cost_summary"]
