@@ -16,6 +16,8 @@ import statistics
 from datetime import datetime
 from typing import Any, Sequence
 
+from transaction_costs import calculate_commissions, calculate_slippage, calculate_bid_ask_spread, DEFAULT_COMMISSION_PER_TRADE, DEFAULT_SLIPPAGE_PCT, DEFAULT_SPREAD_PCT
+
 def _normalize_action(action):
     """Normalize trade action to uppercase, handling None and whitespace."""
     return (str(action).strip().upper() if action is not None else "")
@@ -509,7 +511,7 @@ def calculate_pnl(trades: list[dict]) -> dict:
     }
 
 
-def analyze_uploaded_trades(csv_data: str) -> dict:
+def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT_COMMISSION_PER_TRADE, slippage_pct: float = DEFAULT_SLIPPAGE_PCT, spread_pct: float = DEFAULT_SPREAD_PCT) -> dict:
     """Main entry point: sanitize, detect format, parse, validate, and return a normalised trade dict for real trade history uploads."""
     try:
         clean = sanitize_csv(csv_data)
@@ -528,19 +530,24 @@ def analyze_uploaded_trades(csv_data: str) -> dict:
         warnings = [i for i in all_issues if i.get("level", "warning") in WARNING_LEVELS]
         notices = [i for i in all_issues if i.get("level") in INFO_LEVELS]
         pnl = calculate_pnl(trades) if trades else {}
+        commissions = calculate_commissions(trades, commission_per_trade=commission_per_trade) if trades else {}
+        slippage = calculate_slippage(trades, slippage_pct=slippage_pct) if trades else {}
+        bid_ask_spread = calculate_bid_ask_spread(trades, spread_pct=spread_pct) if trades else {}
         result = {
             "format": fmt,
             "trades": trades,
             "warnings": warnings,
             "notices": notices,
-            "pnl": pnl
+            "pnl": pnl,
+            "commissions": commissions,
+            "slippage": slippage,
+            "bid_ask_spread": bid_ask_spread,
         }
         print("DEBUG: Returning from detailed (main try):", result)
         return result
     except Exception as e:
         try:
             clean = sanitize_csv(csv_data)
-            # All downstream calls (detect_format, parse_detailed, etc.) must use `clean`, not `csv_data`
             fmt = detect_format(clean)
 
             if fmt == "summary":
@@ -551,7 +558,7 @@ def analyze_uploaded_trades(csv_data: str) -> dict:
                     "trades": [],
                     "warnings": [],
                     "notices": [],
-                    "pnl": {}
+                    "pnl": {},
                 }
                 print("DEBUG: Returning from summary:", result)
                 return result
@@ -570,7 +577,7 @@ def analyze_uploaded_trades(csv_data: str) -> dict:
                 "trades": trades,
                 "warnings": warnings,
                 "notices": notices,
-                "pnl": pnl
+                "pnl": pnl,
             }
             print("DEBUG: Returning from detailed:", result)
             return result

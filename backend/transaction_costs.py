@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 # Default cost assumptions (all overridable via CostConfig)
 # ---------------------------------------------------------------------------
 
-DEFAULT_COMMISSION_PER_TRADE: float = 1.00   # $ per trade leg (one-way)
+DEFAULT_COMMISSION_PER_TRADE: float = 1.00   # Commission in USD per trade leg (each BUY or SELL)
 DEFAULT_SLIPPAGE_PCT: float = 0.008          # 0.8% per fill (round-trip = ×2)
 DEFAULT_SPREAD_PCT: float = 0.002            # 0.2% round-trip
 DEFAULT_SHORT_TERM_TAX_RATE: float = 0.37   # Federal max short-term CGT
@@ -306,26 +306,50 @@ def calculate_slippage(
     if preset and preset in _SLIPPAGE_PRESETS:
         slippage_pct = _SLIPPAGE_PRESETS[preset]
 
+    # Validate slippage_pct
+    if not isinstance(slippage_pct, (int, float)) or slippage_pct < 0 or slippage_pct > 1:
+        raise ValueError(f"slippage_pct must be between 0 and 1, got {slippage_pct}")
+
     normalised, is_summary = _to_normalised(trades)
+
+    def _market_impact_pct(slippage_usd, trade_value):
+        if not trade_value or trade_value <= 0:
+            return 0.0
+        return (slippage_usd / trade_value) * 100
 
     if not normalised:
         return {
-            "total_slippage_usd": 0.0,
-            "per_trade_avg_usd":  0.0,
-            "num_trades":         0,
-            "slippage_pct_used":  slippage_pct,
-            "preset":             preset,
+            "total_slippage_usd":  0.0,
+            "per_trade_avg_usd":   0.0,
+            "num_trades":          0,
+            "slippage_pct_used":   slippage_pct,
+            "preset":              preset,
+            "per_trade_breakdown": [],
         }
 
-    total = sum(nt.trade_value * slippage_pct for nt in normalised)
+    per_trade_breakdown = []
+    for nt in normalised:
+        tv = nt.trade_value
+        slippage_usd = round(tv * slippage_pct, 4) if tv > 0 else 0.0
+        mipct = _market_impact_pct(slippage_usd, tv)
+        per_trade_breakdown.append({
+            "symbol": nt.symbol,
+            "action": nt.action,
+            "trade_value": round(tv, 4),
+            "slippage_usd": slippage_usd,
+            "market_impact_pct": round(mipct, 6),
+        })
+
+    total = sum(entry["slippage_usd"] for entry in per_trade_breakdown)
     num   = len(normalised)
 
     return {
-        "total_slippage_usd": round(total, 4),
-        "per_trade_avg_usd":  round(total / num, 4),
-        "num_trades":         num,
-        "slippage_pct_used":  slippage_pct,
-        "preset":             preset,
+        "total_slippage_usd":  round(total, 4),
+        "per_trade_avg_usd":   round(total / num, 4) if num else 0.0,
+        "num_trades":          num,
+        "slippage_pct_used":   slippage_pct,
+        "preset":              preset,
+        "per_trade_breakdown": per_trade_breakdown,
     }
 
 
@@ -339,33 +363,55 @@ def calculate_bid_ask_spread(
     preset: str | None = None,
 ) -> dict:
     """
-    Calculate bid-ask spread costs.
+    Calculate round-trip bid-ask spread costs for each trade leg.
 
-    Fixed cost of crossing the market
+    Returns a dict with total and per-trade breakdown. Each entry in per_trade_breakdown includes:
+      - symbol
+      - action
+      - trade_value
+      - round_trip_spread_usd (cost for this leg)
+      - spread_rate (the spread_pct used)
     """
     if preset and preset in _SPREAD_PRESETS:
         spread_pct = _SPREAD_PRESETS[preset]
+
+    if not isinstance(spread_pct, (int, float)) or spread_pct < 0 or spread_pct > 1:
+        raise ValueError(f"spread_pct must be between 0 and 1, got {spread_pct}")
 
     normalised, is_summary = _to_normalised(trades)
 
     if not normalised:
         return {
-            "total_spread_usd": 0.0,
-            "per_trade_avg_usd": 0.0,
-            "num_trades":        0,
-            "spread_pct_used":   spread_pct,
-            "preset":            preset,
+            "total_spread_usd":    0.0,
+            "per_trade_avg_usd":   0.0,
+            "num_trades":          0,
+            "spread_pct_used":     spread_pct,
+            "preset":              preset,
+            "per_trade_breakdown": [],
         }
 
-    total = sum(nt.trade_value * spread_pct for nt in normalised)
+    per_trade_breakdown = []
+    for nt in normalised:
+        tv = nt.trade_value
+        round_trip_spread_usd = round(tv * spread_pct, 4) if tv > 0 else 0.0
+        per_trade_breakdown.append({
+            "symbol":                nt.symbol,
+            "action":                nt.action,
+            "trade_value":           round(tv, 4),
+            "round_trip_spread_usd": round_trip_spread_usd,
+            "spread_rate":           spread_pct,
+        })
+
+    total = sum(entry["round_trip_spread_usd"] for entry in per_trade_breakdown)
     num   = len(normalised)
 
     return {
-        "total_spread_usd": round(total, 4),
-        "per_trade_avg_usd": round(total / num, 4),
-        "num_trades":        num,
-        "spread_pct_used":   spread_pct,
-        "preset":            preset,
+        "total_spread_usd":    round(total, 4),
+        "per_trade_avg_usd":   round(total / num, 4),
+        "num_trades":          num,
+        "spread_pct_used":     spread_pct,
+        "preset":              preset,
+        "per_trade_breakdown": per_trade_breakdown,
     }
 
 
@@ -378,15 +424,17 @@ def calculate_taxes(
     short_term_tax_rate: float = DEFAULT_SHORT_TERM_TAX_RATE,
     long_term_tax_rate:  float = DEFAULT_LONG_TERM_TAX_RATE,
     apply_taxes: bool = True,
+    offset_losses: bool = True,
 ) -> dict:
     """
-    Estimate capital-gains tax liability on profitable trades.
+    Estimate capital-gains tax liability on trades.
 
-    Trades held < SHORT_TERM_HOLD_DAYS are taxed at the short-term rate;
-    trades held >= SHORT_TERM_HOLD_DAYS at the long-term rate.
+    Trades held <= 365 days are taxed at the short-term rate;
+    trades held > 365 days at the long-term rate (IRS: more than 1 year).
     If hold duration is unknown (e.g. summary input), short-term rate is used.
 
-    Losses are counted but cannot currently offset gains (conservative approach).
+    By default, losses offset gains within each category (short/long term).
+    Set offset_losses=False to use conservative approach (no offsetting).
     """
     if not apply_taxes:
         return {
@@ -404,34 +452,58 @@ def calculate_taxes(
             "long_term_tax_rate_used":  long_term_tax_rate,
         }
 
+    from datetime import timedelta
     normalised, is_summary = _to_normalised(trades)
 
+    short_term_net = 0.0
+    long_term_net = 0.0
     short_gains = 0.0
-    long_gains  = 0.0
-    total_losses = 0.0
+    long_gains = 0.0
+    short_losses = 0.0
+    long_losses = 0.0
     n_win = 0
     n_loss = 0
+    n_short = 0
+    n_long = 0
 
     for nt in normalised:
-        if nt.profit is None:
+        if nt.profit is None or nt.hold_days is None or nt.hold_days < 0:
             continue
-        if nt.profit > 0:
-            n_win += 1
-            hold = nt.hold_days if nt.hold_days is not None else 0
-            if hold > SHORT_TERM_HOLD_DAYS:
-                long_gains  += nt.profit
+        hold = nt.hold_days
+        if hold > 365:
+            n_long += 1
+            if nt.profit > 0:
+                long_gains += nt.profit
+                long_term_net += nt.profit
+                n_win += 1
             else:
-                short_gains += nt.profit
+                long_losses += abs(nt.profit)
+                long_term_net += nt.profit
+                n_loss += 1
         else:
-            n_loss += 1
-            total_losses += abs(nt.profit)
+            n_short += 1
+            if nt.profit > 0:
+                short_gains += nt.profit
+                short_term_net += nt.profit
+                n_win += 1
+            else:
+                short_losses += abs(nt.profit)
+                short_term_net += nt.profit
+                n_loss += 1
 
-    short_tax = short_gains * short_term_tax_rate
-    long_tax  = long_gains  * long_term_tax_rate
+    if offset_losses:
+        short_taxable = max(short_term_net, 0.0)
+        long_taxable = max(long_term_net, 0.0)
+    else:
+        short_taxable = short_gains
+        long_taxable = long_gains
+
+    short_tax = short_taxable * short_term_tax_rate
+    long_tax = long_taxable * long_term_tax_rate
     total_tax = short_tax + long_tax
     total_gains = short_gains + long_gains
-
-    effective_rate = (total_tax / total_gains) if total_gains > 0 else 0.0
+    total_losses = short_losses + long_losses
+    effective_rate = (total_tax / (short_taxable + long_taxable)) if (short_taxable + long_taxable) > 0 else 0.0
 
     return {
         "total_tax_usd":            round(total_tax,     4),
@@ -446,17 +518,69 @@ def calculate_taxes(
         "effective_tax_rate":       round(effective_rate, 6),
         "short_term_tax_rate_used": short_term_tax_rate,
         "long_term_tax_rate_used":  long_term_tax_rate,
+        "offset_losses":            offset_losses,
     }
 
 
 # ---------------------------------------------------------------------------
-# 5. Main entry-point: calculate_real_costs
+# 5. Plain-English cost summary helper
+# ---------------------------------------------------------------------------
+
+def _plain_english_summary(
+    gross_profit_usd: float,
+    after_costs_and_tax_profit_usd: float,
+    total_all_costs_usd: float,
+    gross_return_pct: float,
+    after_costs_and_tax_pct: float,
+) -> str:
+    """Turn the cost numbers into a single sentence a non-expert can understand."""
+    gross = gross_profit_usd
+    net   = after_costs_and_tax_profit_usd
+    costs = total_all_costs_usd
+
+    if gross == 0.0:
+        return "You broke even before costs. Costs and taxes reduced your return."
+
+    if gross < 0:
+        return (
+            f"You lost ${abs(gross):.2f} before costs. "
+            f"Costs and taxes added ${costs:.2f} more, for a total loss of ${abs(net):.2f}."
+        )
+
+    if net <= 0:
+        return (
+            f"You made ${gross:.2f} on paper ({gross_return_pct:.1f}%), but costs and taxes "
+            f"of ${costs:.2f} wiped out the profit, leaving a net loss of ${abs(net):.2f}."
+        )
+
+    fraction_kept = net / gross
+    if fraction_kept >= 0.90:
+        kept_phrase = "nearly all"
+    elif fraction_kept >= 0.65:
+        kept_phrase = "most"
+    elif fraction_kept >= 0.45:
+        kept_phrase = "about half"
+    elif fraction_kept >= 0.25:
+        kept_phrase = "less than half"
+    else:
+        kept_phrase = "only a small portion"
+
+    return (
+        f"You made ${gross:.2f} before costs ({gross_return_pct:.1f}%). "
+        f"Costs and taxes took ${costs:.2f}, so you kept {kept_phrase} — "
+        f"${net:.2f} ({after_costs_and_tax_pct:.1f}% net return)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. Main entry-point: calculate_real_costs
 # ---------------------------------------------------------------------------
 
 def calculate_real_costs(
     trades: Any,
     account_size: float,
     config: CostConfig | None = None,
+    offset_losses: bool = True,
 ) -> dict:
     """
     Master function — run all four cost components and return a unified
@@ -507,6 +631,7 @@ def calculate_real_costs(
         short_term_tax_rate=config.short_term_tax_rate,
         long_term_tax_rate=config.long_term_tax_rate,
         apply_taxes=config.apply_taxes,
+        offset_losses=offset_losses,
     )
 
     # Aggregate
@@ -553,11 +678,21 @@ def calculate_real_costs(
         "bid_ask_spread": spread,
         "taxes":         taxes,
         "cost_summary": {
-            "total_trading_costs_usd": round(total_trading_costs_usd, 4),
-            "total_trading_costs_pct": round(total_cost_pct,          4),
-            "total_tax_usd":           round(total_tax_usd,            4),
-            "total_all_costs_usd":     round(total_all_costs_usd,      4),
-            "total_all_costs_pct":     round(total_all_costs_pct,      4),
+            "gross_return_pct":        round(gross_return_pct,         4),
+            "after_costs_return_pct":  round(after_costs_pct,          4),
+            "after_tax_return_pct":    round(after_costs_and_tax_pct,  4),
+            "total_trading_costs_usd": round(total_trading_costs_usd,  4),
+            "total_trading_costs_pct": round(total_cost_pct,           4),
+            "total_tax_usd":           round(total_tax_usd,             4),
+            "total_all_costs_usd":     round(total_all_costs_usd,       4),
+            "total_all_costs_pct":     round(total_all_costs_pct,       4),
+            "plain_english_summary":   _plain_english_summary(
+                gross_profit_usd,
+                after_costs_and_tax_profit_usd,
+                total_all_costs_usd,
+                gross_return_pct,
+                after_costs_and_tax_pct,
+            ),
             "breakdown_pct": {
                 "commissions":   round(comm["total_commission_usd"]   / account_size * 100, 4) if account_size else 0,
                 "slippage":      round(slip["total_slippage_usd"]     / account_size * 100, 4) if account_size else 0,

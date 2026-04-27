@@ -3,7 +3,7 @@ Tests for calculate_real_costs() adjusted return math.
 Covers multi-trade scenarios with mixed short/long term holds.
 """
 import pytest
-from transaction_costs import calculate_real_costs, CostConfig
+from transaction_costs import calculate_real_costs, calculate_commissions, calculate_slippage, calculate_bid_ask_spread, CostConfig
 
 ACCOUNT_SIZE = 10_000.0
 
@@ -76,24 +76,41 @@ class TestGrossReturn:
 # Tax calculation for mixed holds
 
 class TestTaxCalculation:
-    def test_short_term_gains_taxed_at_37_pct(self):
-        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs())
+    def test_short_term_gains_taxed_at_37_pct_conservative(self):
+        # Conservative: no loss offsetting
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=False)
         taxes = result["taxes"]
         assert taxes["short_term_gains_usd"] == pytest.approx(300.0)
         assert taxes["short_term_tax_usd"] == pytest.approx(111.0)  # 300 * 0.37
 
+    def test_short_term_gains_taxed_at_37_pct_offset(self):
+        # Default: loss offsetting
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=True)
+        taxes = result["taxes"]
+        # Short-term net = 300 - 100 = 200, tax = 74
+        assert taxes["short_term_gains_usd"] == pytest.approx(300.0)
+        assert taxes["short_term_tax_usd"] == pytest.approx(74.0)
+
     def test_long_term_gains_taxed_at_20_pct(self):
-        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs())
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=False)
         taxes = result["taxes"]
         assert taxes["long_term_gains_usd"] == pytest.approx(400.0)
         assert taxes["long_term_tax_usd"] == pytest.approx(80.0)  # 400 * 0.20
 
     def test_losses_are_tracked_but_do_not_offset_gains(self):
         # Conservative: losses are recorded but not netted against gains.
-        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs())
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=False)
         taxes = result["taxes"]
         assert taxes["total_losses_usd"] == pytest.approx(100.0)
         assert taxes["total_tax_usd"] == pytest.approx(191.0)  # still full 111+80
+
+    def test_losses_are_offset_against_gains(self):
+        # Default: loss offsetting
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=True)
+        taxes = result["taxes"]
+        # short_term_net = 200, long_term_net = 400
+        assert taxes["total_losses_usd"] == pytest.approx(100.0)
+        assert taxes["total_tax_usd"] == pytest.approx(154.0)  # 74 + 80
 
     def test_exactly_365_day_hold_is_short_term(self):
         # IRS rule: hold must be MORE than 12 months (> 365 days) for long-term.
@@ -102,7 +119,7 @@ class TestTaxCalculation:
             {"date": "2023-01-01", "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
             {"date": "2024-01-01", "symbol": "AAPL", "action": "SELL", "price": 120.0, "shares": 10},
         ]
-        result = calculate_real_costs(trades, ACCOUNT_SIZE, _no_trading_costs())
+        result = calculate_real_costs(trades, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=True)
         taxes = result["taxes"]
         assert taxes["short_term_tax_usd"] == pytest.approx(74.0)  # $200 * 0.37
         assert taxes["long_term_tax_usd"] == pytest.approx(0.0)
@@ -113,7 +130,7 @@ class TestTaxCalculation:
             {"date": "2024-01-01", "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
             {"date": "2025-01-02", "symbol": "AAPL", "action": "SELL", "price": 120.0, "shares": 10},
         ]
-        result = calculate_real_costs(trades, ACCOUNT_SIZE, _no_trading_costs())
+        result = calculate_real_costs(trades, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=True)
         taxes = result["taxes"]
         assert taxes["long_term_tax_usd"] == pytest.approx(40.0)  # $200 * 0.20
         assert taxes["short_term_tax_usd"] == pytest.approx(0.0)
@@ -163,28 +180,51 @@ class TestAdjustedReturnMath:
         assert adj["after_costs_and_tax_pct"] < adj["after_costs_pct"]
 
     def test_exact_after_tax_return_no_trading_friction(self):
-        # gross=$600 (6.0%), tax=$191 → after_tax = $409 = 4.09%
-        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs())
+        # gross=$600 (6.0%), tax=$154 → after_tax = $446 = 4.46%
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=True)
         adj = result["adjusted_returns"]
         assert adj["gross_return_pct"] == pytest.approx(6.0)
-        assert adj["after_costs_and_tax_profit_usd"] == pytest.approx(409.0)
-        assert adj["after_costs_and_tax_pct"] == pytest.approx(4.09, rel=1e-3)
+        assert adj["after_costs_and_tax_profit_usd"] == pytest.approx(446.0)
+        assert adj["after_costs_and_tax_pct"] == pytest.approx(4.46, rel=1e-3)
 
     def test_exact_after_all_costs_return_default_config(self):
-        # trading_costs=$76 (0.76%), tax=$191 → total=$267 (2.67%)
+        # trading_costs=$76 (0.76%), tax=$154 → total=$230 (2.30%)
         # after_costs_pct=5.24%, after_costs_and_tax_pct=3.33%
-        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, offset_losses=True)
         adj = result["adjusted_returns"]
         cs = result["cost_summary"]
         assert cs["total_trading_costs_usd"] == pytest.approx(76.0, rel=1e-3)
-        assert cs["total_all_costs_usd"] == pytest.approx(267.0, rel=1e-3)
+        assert cs["total_all_costs_usd"] == pytest.approx(230.0, rel=1e-3)
         assert adj["after_costs_pct"] == pytest.approx(5.24, rel=1e-3)
-        assert adj["after_costs_and_tax_pct"] == pytest.approx(3.33, rel=1e-3)
+        assert adj["after_costs_and_tax_pct"] == pytest.approx(3.7, rel=1e-3)
 
 
 # Cost summary integrity
 
 class TestCostSummaryIntegrity:
+    def test_cost_summary_contains_gross_return(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_costs())
+        cs = result["cost_summary"]
+        assert cs["gross_return_pct"] == pytest.approx(6.0)
+
+    def test_cost_summary_after_costs_return_matches_adjusted_returns(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        cs = result["cost_summary"]
+        adj = result["adjusted_returns"]
+        assert cs["after_costs_return_pct"] == pytest.approx(adj["after_costs_pct"], rel=1e-5)
+
+    def test_cost_summary_after_tax_return_matches_adjusted_returns(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        cs = result["cost_summary"]
+        adj = result["adjusted_returns"]
+        assert cs["after_tax_return_pct"] == pytest.approx(adj["after_costs_and_tax_pct"], rel=1e-5)
+
+    def test_cost_summary_zero_costs_all_returns_equal_gross(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_costs())
+        cs = result["cost_summary"]
+        assert cs["after_costs_return_pct"] == pytest.approx(cs["gross_return_pct"])
+        assert cs["after_tax_return_pct"] == pytest.approx(cs["gross_return_pct"])
+
     def test_total_all_costs_equals_trading_costs_plus_tax(self):
         result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
         cs = result["cost_summary"]
@@ -205,3 +245,358 @@ class TestCostSummaryIntegrity:
         assert cs["total_trading_costs_pct"] == pytest.approx(
             cs["total_trading_costs_usd"] / ACCOUNT_SIZE * 100, rel=1e-5
         )
+
+
+# ---------------------------------------------------------------------------
+# Direct calculate_commissions tests
+# ---------------------------------------------------------------------------
+
+class TestCalculateCommissions:
+    def test_flat_fee_default_one_dollar_per_leg(self):
+        # 6 trade legs (3 BUY + 3 SELL) × $1.00 = $6.00
+        result = calculate_commissions(MIXED_TRADES)
+        assert result["total_commission_usd"] == pytest.approx(6.0)
+        assert result["num_trades"] == 6
+        assert result["commission_rate"] == 1.0
+        assert result["is_pct"] is False
+
+    def test_custom_flat_fee(self):
+        # $4.95 per leg × 6 legs = $29.70
+        result = calculate_commissions(MIXED_TRADES, commission_per_trade=4.95)
+        assert result["total_commission_usd"] == pytest.approx(29.70)
+        assert result["commission_rate"] == 4.95
+
+    def test_zero_commission_fee(self):
+        result = calculate_commissions(MIXED_TRADES, commission_per_trade=0.0)
+        assert result["total_commission_usd"] == pytest.approx(0.0)
+        assert result["per_trade_avg_usd"] == pytest.approx(0.0)
+
+    def test_per_trade_avg_is_total_over_num_trades(self):
+        result = calculate_commissions(MIXED_TRADES, commission_per_trade=3.0)
+        assert result["per_trade_avg_usd"] == pytest.approx(
+            result["total_commission_usd"] / result["num_trades"]
+        )
+
+    def test_empty_trade_list_returns_zeros(self):
+        result = calculate_commissions([])
+        assert result["total_commission_usd"] == pytest.approx(0.0)
+        assert result["num_trades"] == 0
+        assert result["per_trade_avg_usd"] == pytest.approx(0.0)
+
+    def test_pct_mode_charges_fraction_of_trade_value(self):
+        # Single BUY: 10 shares @ $100 = $1000 trade value, 0.5% = $5.00
+        single_trade = [
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "BUY", "price": 100.0, "shares": 10},
+        ]
+        result = calculate_commissions(single_trade, commission_per_trade=0.005, commission_is_pct=True)
+        assert result["total_commission_usd"] == pytest.approx(5.0)
+        assert result["is_pct"] is True
+
+    def test_commissions_included_in_calculate_real_costs(self):
+        # Verify calculate_real_costs passes commission_per_trade through CostConfig
+        config = CostConfig(commission_per_trade=5.0, slippage_pct=0.0, spread_pct=0.0, apply_taxes=False)
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, config)
+        # 6 legs × $5.00 = $30.00
+        assert result["commissions"]["total_commission_usd"] == pytest.approx(30.0)
+
+
+# ---------------------------------------------------------------------------
+# Per-trade slippage / market-impact breakdown
+# ---------------------------------------------------------------------------
+
+class TestSlippagePerTradeBreakdown:
+    def test_breakdown_entry_count_matches_trade_legs(self):
+        result = calculate_slippage(MIXED_TRADES)
+        assert len(result["per_trade_breakdown"]) == 6  # 3 BUY + 3 SELL
+
+    def test_breakdown_entry_contains_required_keys(self):
+        result = calculate_slippage(MIXED_TRADES)
+        entry = result["per_trade_breakdown"][0]
+        assert set(entry.keys()) == {"symbol", "action", "trade_value", "slippage_usd", "market_impact_pct"}
+
+    def test_slippage_usd_is_trade_value_times_rate(self):
+        # AAPL BUY: 10 shares × $100 = $1000 trade value; 0.8% → $8.00
+        result = calculate_slippage(MIXED_TRADES, slippage_pct=0.008)
+        aapl_buy = next(e for e in result["per_trade_breakdown"] if e["symbol"] == "AAPL" and e["action"] == "BUY")
+        assert aapl_buy["trade_value"] == pytest.approx(1000.0)
+        assert aapl_buy["slippage_usd"] == pytest.approx(8.0)
+
+    def test_market_impact_pct_is_slippage_pct_times_100(self):
+        rate = 0.008
+        result = calculate_slippage(MIXED_TRADES, slippage_pct=rate)
+        for entry in result["per_trade_breakdown"]:
+            assert entry["market_impact_pct"] == pytest.approx(rate * 100, rel=1e-5)
+
+    def test_total_slippage_equals_sum_of_breakdown(self):
+        result = calculate_slippage(MIXED_TRADES)
+        breakdown_total = sum(e["slippage_usd"] for e in result["per_trade_breakdown"])
+        assert result["total_slippage_usd"] == pytest.approx(breakdown_total, rel=1e-5)
+
+    def test_zero_slippage_pct_returns_zero_usd_and_pct(self):
+        result = calculate_slippage(MIXED_TRADES, slippage_pct=0.0)
+        assert result["total_slippage_usd"] == pytest.approx(0.0)
+        for entry in result["per_trade_breakdown"]:
+            assert entry["slippage_usd"] == pytest.approx(0.0)
+            assert entry["market_impact_pct"] == pytest.approx(0.0)
+
+    def test_empty_trade_list_returns_empty_breakdown(self):
+        result = calculate_slippage([])
+        assert result["per_trade_breakdown"] == []
+        assert result["total_slippage_usd"] == pytest.approx(0.0)
+        assert result["num_trades"] == 0
+
+    def test_preset_low_sets_expected_slippage_pct(self):
+        result = calculate_slippage(MIXED_TRADES, preset="low")
+        assert result["slippage_pct_used"] == pytest.approx(0.003)
+        for entry in result["per_trade_breakdown"]:
+            assert entry["market_impact_pct"] == pytest.approx(0.3, rel=1e-5)
+
+    def test_breakdown_included_in_calculate_real_costs_output(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        assert "per_trade_breakdown" in result["slippage"]
+        assert len(result["slippage"]["per_trade_breakdown"]) == 6
+
+    def test_negative_trade_value_results_in_zero_slippage_and_pct(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "ERR", "action": "BUY", "price": -100.0, "shares": 10},
+        ]
+        result = calculate_slippage(trades)
+        entry = result["per_trade_breakdown"][0]
+        # trade_value is always abs(price * shares)
+        assert entry["trade_value"] == pytest.approx(1000.0)
+        assert entry["slippage_usd"] == pytest.approx(8.0)  # 1000 * 0.008 default
+        assert entry["market_impact_pct"] == pytest.approx(0.8)
+
+    def test_zero_trade_value_results_in_zero_slippage_and_pct(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "ZERO", "action": "BUY", "price": 0.0, "shares": 10},
+        ]
+        result = calculate_slippage(trades)
+        entry = result["per_trade_breakdown"][0]
+        assert entry["trade_value"] == 0.0
+        assert entry["slippage_usd"] == 0.0
+        assert entry["market_impact_pct"] == 0.0
+
+    def test_invalid_slippage_pct_raises(self):
+        with pytest.raises(ValueError):
+            calculate_slippage(MIXED_TRADES, slippage_pct=-0.1)
+        with pytest.raises(ValueError):
+            calculate_slippage(MIXED_TRADES, slippage_pct=2.0)
+
+    def test_single_trade_breakdown(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "BUY", "price": 100.0, "shares": 1},
+        ]
+        result = calculate_slippage(trades, slippage_pct=0.01)
+        assert len(result["per_trade_breakdown"]) == 1
+        entry = result["per_trade_breakdown"][0]
+        assert entry["trade_value"] == pytest.approx(100.0)
+        assert entry["slippage_usd"] == pytest.approx(1.0)
+        assert entry["market_impact_pct"] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Per-trade bid-ask spread breakdown
+# ---------------------------------------------------------------------------
+
+class TestSpreadPerTradeBreakdown:
+    def test_breakdown_entry_count_matches_trade_legs(self):
+        result = calculate_bid_ask_spread(MIXED_TRADES)
+        assert len(result["per_trade_breakdown"]) == 6  # 3 BUY + 3 SELL
+
+    def test_breakdown_entry_contains_required_keys(self):
+        result = calculate_bid_ask_spread(MIXED_TRADES)
+        entry = result["per_trade_breakdown"][0]
+        assert set(entry.keys()) == {"symbol", "action", "trade_value", "round_trip_spread_usd", "spread_rate"}
+
+    def test_round_trip_spread_usd_is_trade_value_times_rate(self):
+        # AAPL BUY: 10 shares × $100 = $1000 trade value; 0.2% → $2.00
+        result = calculate_bid_ask_spread(MIXED_TRADES, spread_pct=0.002)
+        aapl_buy = next(e for e in result["per_trade_breakdown"] if e["symbol"] == "AAPL" and e["action"] == "BUY")
+        assert aapl_buy["trade_value"] == pytest.approx(1000.0)
+        assert aapl_buy["round_trip_spread_usd"] == pytest.approx(2.0)
+
+    def test_spread_rate_is_spread_pct(self):
+        rate = 0.002
+        result = calculate_bid_ask_spread(MIXED_TRADES, spread_pct=rate)
+        for entry in result["per_trade_breakdown"]:
+            assert entry["spread_rate"] == pytest.approx(rate, rel=1e-5)
+
+    def test_total_spread_equals_sum_of_breakdown(self):
+        result = calculate_bid_ask_spread(MIXED_TRADES)
+        breakdown_total = sum(e["round_trip_spread_usd"] for e in result["per_trade_breakdown"])
+        assert result["total_spread_usd"] == pytest.approx(breakdown_total, rel=1e-5)
+
+    def test_zero_spread_pct_returns_zero_usd_and_rate(self):
+        result = calculate_bid_ask_spread(MIXED_TRADES, spread_pct=0.0)
+        assert result["total_spread_usd"] == pytest.approx(0.0)
+        for entry in result["per_trade_breakdown"]:
+            assert entry["round_trip_spread_usd"] == pytest.approx(0.0)
+            assert entry["spread_rate"] == pytest.approx(0.0)
+
+    def test_empty_trade_list_returns_empty_breakdown(self):
+        result = calculate_bid_ask_spread([])
+        assert result["per_trade_breakdown"] == []
+        assert result["total_spread_usd"] == pytest.approx(0.0)
+        assert result["num_trades"] == 0
+
+    def test_preset_low_sets_expected_spread_pct(self):
+        result = calculate_bid_ask_spread(MIXED_TRADES, preset="low")
+        assert result["spread_pct_used"] == pytest.approx(0.001)
+        for entry in result["per_trade_breakdown"]:
+            assert entry["spread_rate"] == pytest.approx(0.001, rel=1e-5)
+
+    def test_breakdown_included_in_calculate_real_costs_output(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        assert "per_trade_breakdown" in result["bid_ask_spread"]
+        assert len(result["bid_ask_spread"]["per_trade_breakdown"]) == 6
+
+    def test_zero_trade_value_results_in_zero_spread_and_rate(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "ZERO", "action": "BUY", "price": 0.0, "shares": 10},
+        ]
+        result = calculate_bid_ask_spread(trades)
+        entry = result["per_trade_breakdown"][0]
+        assert entry["trade_value"] == 0.0
+        assert entry["round_trip_spread_usd"] == 0.0
+        # spread_rate should match the input spread_pct (default 0.002)
+        assert entry["spread_rate"] == pytest.approx(0.002)
+    def test_negative_spread_pct_raises(self):
+        with pytest.raises(ValueError):
+            calculate_bid_ask_spread(MIXED_TRADES, spread_pct=-0.01)
+        with pytest.raises(ValueError):
+            calculate_bid_ask_spread(MIXED_TRADES, spread_pct=1.5)
+
+    def test_mixed_buy_sell_legs(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "BUY", "price": 100.0, "shares": 10},
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "SELL", "price": 110.0, "shares": 5},
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "SELL", "price": 120.0, "shares": 5},
+        ]
+        result = calculate_bid_ask_spread(trades, spread_pct=0.002)
+        assert len(result["per_trade_breakdown"]) == 3
+        for entry in result["per_trade_breakdown"]:
+            assert entry["spread_rate"] == pytest.approx(0.002)
+
+    def test_invalid_spread_pct_raises(self):
+        with pytest.raises(ValueError):
+            calculate_bid_ask_spread(MIXED_TRADES, spread_pct=-0.1)
+        with pytest.raises(ValueError):
+            calculate_bid_ask_spread(MIXED_TRADES, spread_pct=2.0)
+
+    def test_single_trade_breakdown(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "BUY", "price": 100.0, "shares": 1},
+        ]
+        result = calculate_bid_ask_spread(trades, spread_pct=0.002)
+        assert len(result["per_trade_breakdown"]) == 1
+        entry = result["per_trade_breakdown"][0]
+        assert entry["trade_value"] == pytest.approx(100.0)
+        assert entry["round_trip_spread_usd"] == pytest.approx(0.2)
+        assert entry["spread_rate"] == pytest.approx(0.002)
+
+    def test_spread_included_in_analyze_uploaded_trades(self):
+        csv_data = (
+            "date,symbol,action,price,shares\n"
+            "2024-01-01,AAPL,BUY,100.0,10\n"
+            "2024-06-30,AAPL,SELL,130.0,10\n"
+        )
+        from csv_analyzer import analyze_uploaded_trades
+        result = analyze_uploaded_trades(csv_data, spread_pct=0.002)
+        assert "bid_ask_spread" in result
+        spread = result["bid_ask_spread"]
+        assert spread["spread_pct_used"] == pytest.approx(0.002)
+        assert "per_trade_breakdown" in spread
+        assert len(spread["per_trade_breakdown"]) == 2  # BUY + SELL legs
+
+
+# ---------------------------------------------------------------------------
+# Tax edge cases
+# ---------------------------------------------------------------------------
+
+class TestTaxEdgeCases:
+    def test_zero_gains_no_divide_by_zero(self):
+        # All trades are losses, so total gains = 0
+        trades = [
+            {"date": "2024-01-01", "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
+            {"date": "2024-06-30", "symbol": "AAPL", "action": "SELL", "price": 90.0,  "shares": 10},
+            {"date": "2024-01-01", "symbol": "MSFT", "action": "BUY",  "price": 200.0, "shares": 5},
+            {"date": "2024-06-30", "symbol": "MSFT", "action": "SELL", "price": 180.0, "shares": 5},
+        ]
+        config = CostConfig(
+            commission_per_trade=0.0,
+            slippage_pct=0.0,
+            spread_pct=0.0,
+            apply_taxes=True,
+        )
+        result = calculate_real_costs(trades, ACCOUNT_SIZE, config)
+        taxes = result["taxes"]
+        assert taxes["total_gains_usd"] == 0.0
+        assert taxes["total_tax_usd"] == 0.0
+        assert taxes["effective_tax_rate"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Plain-English summary
+# ---------------------------------------------------------------------------
+
+class TestPlainEnglishSummary:
+    def test_summary_present_in_cost_summary(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        assert "plain_english_summary" in result["cost_summary"]
+        assert isinstance(result["cost_summary"]["plain_english_summary"], str)
+
+    def test_profitable_scenario_mentions_kept_phrase(self):
+        # gross $600, net ~$333 after all costs/taxes → kept about half
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, offset_losses=True)
+        summary = result["cost_summary"]["plain_english_summary"]
+        assert "kept" in summary.lower()
+
+    def test_profitable_scenario_mentions_gross_and_net_amounts(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_trading_costs(), offset_losses=True)
+        # gross $600, net $446 after tax only
+        summary = result["cost_summary"]["plain_english_summary"]
+        assert "600" in summary
+        assert "446" in summary
+
+    def test_zero_costs_summary_mentions_nearly_all(self):
+        # With zero costs the net equals gross: fraction_kept = 1.0 → "nearly all"
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE, _no_costs())
+        summary = result["cost_summary"]["plain_english_summary"]
+        assert "nearly all" in summary.lower()
+
+    def test_loss_scenario_mentions_loss(self):
+        losing_trades = [
+            {"date": "2024-01-01", "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
+            {"date": "2024-06-30", "symbol": "AAPL", "action": "SELL", "price":  80.0, "shares": 10},
+        ]
+        result = calculate_real_costs(losing_trades, ACCOUNT_SIZE, _no_costs())
+        summary = result["cost_summary"]["plain_english_summary"]
+        assert "lost" in summary.lower()
+
+    def test_wipeout_scenario_mentions_wiped_out(self):
+        # Make a small gross profit but apply heavy costs so net goes negative
+        tiny_gain_trades = [
+            {"date": "2024-01-01", "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
+            {"date": "2024-06-30", "symbol": "AAPL", "action": "SELL", "price": 101.0, "shares": 10},
+        ]
+        heavy_cost_config = CostConfig(
+            commission_per_trade=0.0,
+            slippage_pct=0.10,  # 10% per leg = far exceeds $10 gain
+            spread_pct=0.0,
+            apply_taxes=False,  # isolate to trading costs only
+        )
+        result = calculate_real_costs(tiny_gain_trades, ACCOUNT_SIZE, heavy_cost_config)
+        cs = result["cost_summary"]
+        # Confirm we actually are in wipeout territory before checking the string
+        assert cs["total_trading_costs_usd"] > result["adjusted_returns"]["gross_profit_usd"]
+        assert "wiped out" in cs["plain_english_summary"].lower()
+
+    def test_breakeven_scenario_does_not_say_lost(self):
+        breakeven_trades = [
+            {"date": "2024-01-01", "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
+            {"date": "2024-06-30", "symbol": "AAPL", "action": "SELL", "price": 100.0, "shares": 10},
+        ]
+        result = calculate_real_costs(breakeven_trades, ACCOUNT_SIZE, _no_costs())
+        summary = result["cost_summary"]["plain_english_summary"]
+        assert "lost" not in summary.lower()
