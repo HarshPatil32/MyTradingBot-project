@@ -15,6 +15,7 @@ calculate_commissions(trades, ...)  →  dict
 calculate_slippage(trades, ...)     →  dict
 calculate_bid_ask_spread(trades, …) →  dict
 calculate_taxes(trades, ...)        →  dict
+calculate_win_rate(trades)          →  dict
 calculate_real_costs(trades, account_size, config)  →  dict   ← main entry-point
 
 Input formats accepted
@@ -523,7 +524,48 @@ def calculate_taxes(
 
 
 # ---------------------------------------------------------------------------
-# 5. Plain-English cost summary helper
+# 5. Win-rate calculator
+# ---------------------------------------------------------------------------
+
+def calculate_win_rate(trades: Any) -> dict:
+    """
+    Calculate the percentage of closed trades that were profitable.
+
+    A closed trade is a round-trip (matched BUY + SELL) with a numeric profit value.
+    Trades with exactly zero profit or non-numeric profit are counted as losses.
+    """
+    normalised, _ = _to_normalised(trades)
+
+    # Only SELL-side legs with a numeric profit value represent closed round-trips
+    def _is_numeric(val):
+        return isinstance(val, (int, float))
+
+    closed = [nt for nt in normalised if nt.action == "SELL" and _is_numeric(nt.profit)]
+    num_closed = len(closed)
+
+    if num_closed == 0:
+        return {
+            "win_rate_pct":       0.0,
+            "win_rate":           0.0,
+            "num_closed_trades":  0,
+            "num_winning_trades": 0,
+            "num_losing_trades":  0,
+        }
+
+    num_wins   = sum(1 for nt in closed if nt.profit > 0)
+    num_losses = num_closed - num_wins
+
+    return {
+        "win_rate_pct":       round(num_wins / num_closed * 100, 4),
+        "win_rate":           round(num_wins / num_closed, 6),
+        "num_closed_trades":  num_closed,
+        "num_winning_trades": num_wins,
+        "num_losing_trades":  num_losses,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 6. Plain-English cost summary helper
 # ---------------------------------------------------------------------------
 
 def _plain_english_summary(
@@ -612,6 +654,7 @@ def calculate_real_costs(
         gross_return_pct = (gross_profit_usd / account_size * 100) if account_size else 0.0
 
     # Run individual calculators
+    win_rate = calculate_win_rate(trades)
     comm   = calculate_commissions(
         trades,
         commission_per_trade=config.commission_per_trade,
@@ -677,6 +720,7 @@ def calculate_real_costs(
         "slippage":      slip,
         "bid_ask_spread": spread,
         "taxes":         taxes,
+        "win_rate":      win_rate,
         "cost_summary": {
             "gross_return_pct":        round(gross_return_pct,         4),
             "after_costs_return_pct":  round(after_costs_pct,          4),

@@ -3,7 +3,7 @@ Tests for calculate_real_costs() adjusted return math.
 Covers multi-trade scenarios with mixed short/long term holds.
 """
 import pytest
-from transaction_costs import calculate_real_costs, calculate_commissions, calculate_slippage, calculate_bid_ask_spread, CostConfig
+from transaction_costs import calculate_real_costs, calculate_commissions, calculate_slippage, calculate_bid_ask_spread, calculate_win_rate, CostConfig
 
 ACCOUNT_SIZE = 10_000.0
 
@@ -600,3 +600,76 @@ class TestPlainEnglishSummary:
         result = calculate_real_costs(breakeven_trades, ACCOUNT_SIZE, _no_costs())
         summary = result["cost_summary"]["plain_english_summary"]
         assert "lost" not in summary.lower()
+
+
+# ---------------------------------------------------------------------------
+# Win-rate tests
+# ---------------------------------------------------------------------------
+
+class TestCalculateWinRate:
+    def test_win_rate_invalid_profit_type(self):
+        trades = [
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "SELL", "profit": "not_a_number"},
+            {"date": BUY_DATE, "symbol": "AAPL", "action": "SELL", "profit": None},
+        ]
+        result = calculate_win_rate(trades)
+        assert result["win_rate_pct"] == 0.0
+        assert result["num_winning_trades"] == 0
+        assert result["num_closed_trades"] == 0
+    # MIXED_TRADES: AAPL=win (+$300), MSFT=loss (-$100), GOOG=win (+$400) → 2/3 wins
+    def test_win_rate_with_mixed_trades(self):
+        result = calculate_win_rate(MIXED_TRADES)
+        assert result["num_closed_trades"]  == 3
+        assert result["num_winning_trades"] == 2
+        assert result["num_losing_trades"]  == 1
+        assert result["win_rate_pct"] == pytest.approx(66.6667, rel=1e-3)
+        assert result["win_rate"]     == pytest.approx(2 / 3,   rel=1e-5)
+
+    def test_win_rate_all_wins(self):
+        all_winning = [
+            {"date": BUY_DATE,        "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
+            {"date": SHORT_SELL_DATE, "symbol": "AAPL", "action": "SELL", "price": 120.0, "shares": 10},
+            {"date": BUY_DATE,        "symbol": "MSFT", "action": "BUY",  "price": 200.0, "shares": 5},
+            {"date": SHORT_SELL_DATE, "symbol": "MSFT", "action": "SELL", "price": 220.0, "shares": 5},
+        ]
+        result = calculate_win_rate(all_winning)
+        assert result["win_rate_pct"] == pytest.approx(100.0)
+        assert result["num_winning_trades"] == 2
+        assert result["num_losing_trades"]  == 0
+
+    def test_win_rate_all_losses(self):
+        all_losing = [
+            {"date": BUY_DATE,        "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
+            {"date": SHORT_SELL_DATE, "symbol": "AAPL", "action": "SELL", "price":  80.0, "shares": 10},
+        ]
+        result = calculate_win_rate(all_losing)
+        assert result["win_rate_pct"] == pytest.approx(0.0)
+        assert result["win_rate"]     == pytest.approx(0.0)
+        assert result["num_winning_trades"] == 0
+        assert result["num_losing_trades"]  == 1
+
+    def test_win_rate_zero_profit_counts_as_loss(self):
+        breakeven = [
+            {"date": BUY_DATE,        "symbol": "AAPL", "action": "BUY",  "price": 100.0, "shares": 10},
+            {"date": SHORT_SELL_DATE, "symbol": "AAPL", "action": "SELL", "price": 100.0, "shares": 10},
+        ]
+        result = calculate_win_rate(breakeven)
+        assert result["win_rate_pct"] == pytest.approx(0.0)
+        assert result["num_winning_trades"] == 0
+        assert result["num_losing_trades"]  == 1
+
+    def test_win_rate_no_trades_returns_zero(self):
+        result = calculate_win_rate([])
+        assert result["win_rate_pct"]       == pytest.approx(0.0)
+        assert result["win_rate"]           == pytest.approx(0.0)
+        assert result["num_closed_trades"]  == 0
+        assert result["num_winning_trades"] == 0
+        assert result["num_losing_trades"]  == 0
+
+    def test_calculate_real_costs_includes_win_rate(self):
+        result = calculate_real_costs(MIXED_TRADES, ACCOUNT_SIZE)
+        assert "win_rate" in result
+        wr = result["win_rate"]
+        assert wr["num_closed_trades"]  == 3
+        assert wr["num_winning_trades"] == 2
+        assert wr["win_rate_pct"] == pytest.approx(66.6667, rel=1e-3)
