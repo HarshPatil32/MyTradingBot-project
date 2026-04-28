@@ -2,7 +2,7 @@
 import random
 import pytest
 
-from statistical_tests import run_significance_tests, winrate_binomial_test
+from statistical_tests import run_significance_tests, winrate_binomial_test, plain_english_verdict, VERDICT_NOT_ENOUGH, VERDICT_REAL_EDGE
 
 # Shared fixtures
 
@@ -373,3 +373,42 @@ class TestWinrateBinomialTest:
         result = winrate_binomial_test([1.0] * 24 + [-1.0] * 6)
         assert result["significant"] is True
         assert result["p_value"] < 0.05
+
+
+# 8. Plain-English verdict
+
+
+PLAIN_ENGLISH_VERDICTS = {VERDICT_NOT_ENOUGH, VERDICT_REAL_EDGE}
+
+
+class TestPlainEnglishVerdict:
+    def test_not_significant_returns_not_enough(self):
+        # Coin-flip trades pass min_trades but have no edge — NOT_SIGNIFICANT path
+        result = run_significance_tests(COIN_FLIP_TRADES)
+        assert result["verdict"] == "NOT_SIGNIFICANT"
+        assert plain_english_verdict(COIN_FLIP_TRADES) == VERDICT_NOT_ENOUGH
+
+    def test_winning_trades_returns_real_edge(self):
+        assert plain_english_verdict(WINNING_TRADES) == VERDICT_REAL_EDGE
+
+    def test_noise_trades_returns_not_enough(self):
+        assert plain_english_verdict(NOISE_TRADES) == VERDICT_NOT_ENOUGH
+
+    def test_small_sample_returns_not_enough(self):
+        assert plain_english_verdict(SMALL_SAMPLE) == VERDICT_NOT_ENOUGH
+
+    def test_empty_list_returns_not_enough(self):
+        assert plain_english_verdict([]) == VERDICT_NOT_ENOUGH
+
+    def test_returns_one_of_two_valid_strings(self):
+        for pnl in [WINNING_TRADES, NOISE_TRADES, SMALL_SAMPLE, [], FLAT_TRADES]:
+            assert plain_english_verdict(pnl) in PLAIN_ENGLISH_VERDICTS
+
+    def test_custom_min_trades_affects_verdict(self):
+        # WINNING_TRADES (35) is significant at default min_trades=30
+        # Raising the bar to 50 should flip it to "not enough trades to know yet"
+        assert plain_english_verdict(WINNING_TRADES, min_trades=50) == VERDICT_NOT_ENOUGH
+
+    def test_returns_string(self):
+        assert isinstance(plain_english_verdict(WINNING_TRADES), str)
+

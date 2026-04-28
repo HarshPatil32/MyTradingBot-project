@@ -16,6 +16,7 @@ Tests performed
 Public API
 ----------
 run_significance_tests(pnl_list, ...)  →  dict      ← main entry-point
+plain_english_verdict(pnl_list, ...)   →  str       ← simple human-readable verdict
 """
 
 from __future__ import annotations
@@ -37,6 +38,14 @@ DEFAULT_MIN_TRADES: int = 30         # minimum trade count for reliable inferenc
 DEFAULT_BOOTSTRAP_ITERS: int = 10_000
 DEFAULT_CI_LEVEL: float = 0.95
 
+
+
+# ---------------------------------------------------------------------------
+# Verdict constants (for import by tests and UI)
+# ---------------------------------------------------------------------------
+
+VERDICT_NOT_ENOUGH = "not enough trades to know yet"
+VERDICT_REAL_EDGE = "your win rate looks like a real edge"
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -554,6 +563,26 @@ def run_significance_tests(
         "winrate": wr,
         "warnings": warnings,
     }
+
+
+
+def plain_english_verdict(
+    pnl_list: Sequence[float],
+    alpha: float = DEFAULT_ALPHA,
+    min_trades: int = DEFAULT_MIN_TRADES,
+    **kwargs,
+) -> str:
+    """
+    Returns a plain-English verdict on whether the strategy shows a real edge.
+
+    "not enough trades to know yet"        — too few trades, or no significant edge
+    "your win rate looks like a real edge" — t-test and bootstrap CI both confirm significance
+    """
+    result = run_significance_tests(pnl_list, alpha=alpha, min_trades=min_trades, **kwargs)
+    if result["verdict"] == "SIGNIFICANT":
+        return VERDICT_REAL_EDGE
+    return VERDICT_NOT_ENOUGH
+
 
 
 def _skewness(data: list[float]) -> float:
