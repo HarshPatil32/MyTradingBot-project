@@ -315,9 +315,11 @@ class TestAnalyzeUploadedTradesDetailed:
         result = analyze_uploaded_trades(self._VALID_CSV)
         assert isinstance(result["warnings"], list)
 
-    def test_no_warnings_for_clean_trades(self):
+    def test_no_data_quality_warnings_for_clean_trades(self):
+        # Clean data produces no duplicate/pairing warnings; only the trade count notice is expected
         result = analyze_uploaded_trades(self._VALID_CSV)
-        assert result["warnings"] == []
+        quality_warnings = [w for w in result["warnings"] if w["type"] != "insufficient_trade_count"]
+        assert quality_warnings == []
 
     def test_returns_pnl_dict(self):
         result = analyze_uploaded_trades(self._VALID_CSV)
@@ -351,6 +353,57 @@ class TestAnalyzeUploadedTradesDetailed:
         )
         result = analyze_uploaded_trades(csv_data)
         assert any(w["type"] == "unmatched_sell" for w in result["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Trade count sufficiency warnings
+# ---------------------------------------------------------------------------
+
+def _make_closed_trades(n: int) -> str:
+    """Generate CSV with n matched BUY+SELL pairs for AAPL."""
+    rows = ["date,symbol,action,price,shares"]
+    for i in range(n):
+        rows.append(f"2024-01-{(i % 28) + 1:02d},AAPL,BUY,100.00,10")
+        rows.append(f"2024-02-{(i % 28) + 1:02d},AAPL,SELL,110.00,10")
+    return "\n".join(rows) + "\n"
+
+
+class TestTradeCountSufficiencyWarning:
+
+    def test_fewer_than_30_closed_trades_warns(self):
+        result = analyze_uploaded_trades(_make_closed_trades(5))
+        warning = next((w for w in result["warnings"] if w["type"] == "insufficient_trade_count"), None)
+        assert warning is not None
+        assert warning["count"] == 5
+
+    def test_29_closed_trades_warns(self):
+        result = analyze_uploaded_trades(_make_closed_trades(29))
+        warning = next((w for w in result["warnings"] if w["type"] == "insufficient_trade_count"), None)
+        assert warning is not None
+        assert warning["count"] == 29
+
+    def test_exactly_30_closed_trades_no_warn(self):
+        result = analyze_uploaded_trades(_make_closed_trades(30))
+        assert not any(w["type"] == "insufficient_trade_count" for w in result["warnings"])
+
+    def test_more_than_30_closed_trades_no_warn(self):
+        result = analyze_uploaded_trades(_make_closed_trades(31))
+        assert not any(w["type"] == "insufficient_trade_count" for w in result["warnings"])
+
+    def test_warning_has_correct_structure(self):
+        result = analyze_uploaded_trades(_make_closed_trades(1))
+        warning = next(w for w in result["warnings"] if w["type"] == "insufficient_trade_count")
+        assert warning["level"] == "warning"
+        assert "30" in warning["message"]
+        assert warning["count"] == 1
+
+    def test_zero_closed_trades_warns(self):
+        # Only BUY rows — no closed trades
+        csv_data = "date,symbol,action,price,shares\n2024-01-15,AAPL,BUY,100.00,10\n"
+        result = analyze_uploaded_trades(csv_data)
+        warning = next((w for w in result["warnings"] if w["type"] == "insufficient_trade_count"), None)
+        assert warning is not None
+        assert warning["count"] == 0
 
 
 def test_non_numeric_commission_per_trade_rejected(client):

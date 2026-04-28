@@ -60,6 +60,21 @@ DEFAULT_SHORT_TERM_TAX_RATE: float = 0.37   # Federal max short-term CGT
 DEFAULT_LONG_TERM_TAX_RATE: float = 0.20    # Federal long-term CGT
 SHORT_TERM_HOLD_DAYS: int = 365              # < 1 year → short-term treatment
 
+MIN_CLOSED_TRADES_FOR_CONCLUSIONS: int = 30  # Minimum closed trades for statistically reliable results
+
+def check_trade_count_sufficiency(closed_trade_count: int) -> dict | None:
+    if closed_trade_count < MIN_CLOSED_TRADES_FOR_CONCLUSIONS:
+        return {
+            "type": "insufficient_trade_count",
+            "level": "warning",
+            "message": (
+                f"Only {closed_trade_count} closed trade(s) found. "
+                f"At least {MIN_CLOSED_TRADES_FOR_CONCLUSIONS} closed trades are needed to draw reliable conclusions."
+            ),
+            "count": closed_trade_count,
+        }
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Configuration dataclass
@@ -550,6 +565,8 @@ def calculate_win_rate(trades: Any) -> dict:
             "num_closed_trades":  0,
             "num_winning_trades": 0,
             "num_losing_trades":  0,
+            "low_sample_warning": True,
+            "closed_trade_count": 0,
         }
 
     num_wins   = sum(1 for nt in closed if nt.profit > 0)
@@ -561,6 +578,8 @@ def calculate_win_rate(trades: Any) -> dict:
         "num_closed_trades":  num_closed,
         "num_winning_trades": num_wins,
         "num_losing_trades":  num_losses,
+        "low_sample_warning": num_closed < MIN_CLOSED_TRADES_FOR_CONCLUSIONS,
+        "closed_trade_count": num_closed,
     }
 
 

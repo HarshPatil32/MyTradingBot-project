@@ -673,3 +673,24 @@ class TestCalculateWinRate:
         assert wr["num_closed_trades"]  == 3
         assert wr["num_winning_trades"] == 2
         assert wr["win_rate_pct"] == pytest.approx(66.6667, rel=1e-3)
+
+    def test_low_sample_warning_true_for_small_set(self):
+        # MIXED_TRADES has 3 closed trades — well below 30
+        result = calculate_win_rate(MIXED_TRADES)
+        assert result["low_sample_warning"] is True
+        assert result["closed_trade_count"] == 3
+
+    def test_low_sample_warning_true_for_zero_trades(self):
+        result = calculate_win_rate([])
+        assert result["low_sample_warning"] is True
+        assert result["closed_trade_count"] == 0
+
+    def test_low_sample_warning_false_for_sufficient_trades(self):
+        # Build 30 identical winning round-trips
+        trades = []
+        for i in range(30):
+            trades.append({"date": BUY_DATE, "symbol": "AAPL", "action": "BUY", "price": 100.0, "shares": 10})
+            trades.append({"date": SHORT_SELL_DATE, "symbol": "AAPL", "action": "SELL", "price": 110.0, "shares": 10})
+        result = calculate_win_rate(trades)
+        assert result["low_sample_warning"] is False
+        assert result["closed_trade_count"] == 30
