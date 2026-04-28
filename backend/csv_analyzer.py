@@ -16,7 +16,8 @@ import statistics
 from datetime import datetime
 from typing import Any, Sequence
 
-from transaction_costs import calculate_commissions, calculate_slippage, calculate_bid_ask_spread, DEFAULT_COMMISSION_PER_TRADE, DEFAULT_SLIPPAGE_PCT, DEFAULT_SPREAD_PCT
+from transaction_costs import calculate_commissions, calculate_slippage, calculate_bid_ask_spread, DEFAULT_COMMISSION_PER_TRADE, DEFAULT_SLIPPAGE_PCT, DEFAULT_SPREAD_PCT, MIN_CLOSED_TRADES_FOR_CONCLUSIONS, check_trade_count_sufficiency
+from statistical_tests import run_significance_tests
 
 def _normalize_action(action):
     """Normalize trade action to uppercase, handling None and whitespace."""
@@ -515,24 +516,31 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
     """Main entry point: sanitize, detect format, parse, validate, and return a normalised trade dict for real trade history uploads."""
     try:
         clean = sanitize_csv(csv_data)
-        # All downstream calls (detect_format, parse_detailed, etc.) must use `clean`, not `csv_data`
         fmt = detect_format(clean)
+        warnings = []
         if fmt == "summary":
             summary = parse_summary(clean)
-            return {"format": fmt, "summary": summary}
+            sufficiency_warning = check_trade_count_sufficiency(summary.get("num_trades", 0))
+            if sufficiency_warning:
+                warnings.append(sufficiency_warning)
+            return {"format": fmt, "summary": summary, "warnings": warnings}
 
-        trades = parse_detailed(clean)
-        if trades is None:
-            trades = []
+        trades = parse_detailed(clean) or []
         all_issues = validate_trades(trades) or []
         WARNING_LEVELS = {"warning", "error"}
         INFO_LEVELS = {"info"}
-        warnings = [i for i in all_issues if i.get("level", "warning") in WARNING_LEVELS]
+        warnings.extend(i for i in all_issues if i.get("level", "warning") in WARNING_LEVELS)
         notices = [i for i in all_issues if i.get("level") in INFO_LEVELS]
         pnl = calculate_pnl(trades) if trades else {}
+        num_closed = len(pnl.get("trade_pnl", []))
+        sufficiency_warning = check_trade_count_sufficiency(num_closed)
+        if sufficiency_warning:
+            warnings.append(sufficiency_warning)
         commissions = calculate_commissions(trades, commission_per_trade=commission_per_trade) if trades else {}
         slippage = calculate_slippage(trades, slippage_pct=slippage_pct) if trades else {}
         bid_ask_spread = calculate_bid_ask_spread(trades, spread_pct=spread_pct) if trades else {}
+        pnl_values = [t["pnl"] for t in pnl.get("trade_pnl", [])]
+        significance = run_significance_tests(pnl_values) if pnl_values else None
         result = {
             "format": fmt,
             "trades": trades,
@@ -542,6 +550,7 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
             "commissions": commissions,
             "slippage": slippage,
             "bid_ask_spread": bid_ask_spread,
+            "significance": significance,
         }
         print("DEBUG: Returning from detailed (main try):", result)
         return result
@@ -552,11 +561,22 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
 
             if fmt == "summary":
                 summary = parse_summary(clean)
+                summary_warnings = []
+                if summary.get("num_trades", 0) < MIN_CLOSED_TRADES_FOR_CONCLUSIONS:
+                    summary_warnings.append({
+                        "type": "insufficient_trade_count",
+                        "level": "warning",
+                        "message": (
+                            f"Only {summary['num_trades']} trade(s) found. "
+                            f"At least {MIN_CLOSED_TRADES_FOR_CONCLUSIONS} closed trades are needed "
+                            "to draw reliable conclusions."
+                        ),
+                    })
                 result = {
                     "format": fmt,
                     "summary": summary,
                     "trades": [],
-                    "warnings": [],
+                    "warnings": summary_warnings,
                     "notices": [],
                     "pnl": {},
                 }
@@ -572,12 +592,26 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
             warnings = [i for i in all_issues if i.get("level", "warning") in WARNING_LEVELS]
             notices = [i for i in all_issues if i.get("level") in INFO_LEVELS]
             pnl = calculate_pnl(trades) if trades else {}
+            num_closed = len(pnl.get("trade_pnl", []))
+            if num_closed < MIN_CLOSED_TRADES_FOR_CONCLUSIONS:
+                warnings.append({
+                    "type": "insufficient_trade_count",
+                    "level": "warning",
+                    "message": (
+                        f"Only {num_closed} closed trade(s) found. "
+                        f"At least {MIN_CLOSED_TRADES_FOR_CONCLUSIONS} closed trades are needed "
+                        "to draw reliable conclusions."
+                    ),
+                })
+            pnl_values = [t["pnl"] for t in pnl.get("trade_pnl", [])]
+            significance = run_significance_tests(pnl_values)
             result = {
                 "format": fmt,
                 "trades": trades,
                 "warnings": warnings,
                 "notices": notices,
                 "pnl": pnl,
+                "significance": significance,
             }
             print("DEBUG: Returning from detailed:", result)
             return result
@@ -593,5 +627,6 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
                 "warnings": [],
                 "notices": [],
                 "pnl": {},
+                "significance": None,
                 # 'summary' key is omitted for detailed fallback
             }

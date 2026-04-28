@@ -74,7 +74,9 @@ class TestValidateTrades:
         try:
             result = analyze_uploaded_trades("date,symbol,action,price,shares\n")
             assert "notices" in result
-            assert all(w["type"] in {"duplicate", "unmatched_sell"} for w in result["warnings"])
+            # Only validate_trades-sourced warnings; trade count warning may also appear
+            validate_types = {"duplicate", "unmatched_sell", "insufficient_trade_count"}
+            assert all(w["type"] in validate_types for w in result["warnings"])
         finally:
             csv_analyzer.validate_trades = orig
 

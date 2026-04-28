@@ -2,7 +2,7 @@
 import random
 import pytest
 
-from statistical_tests import run_significance_tests
+from statistical_tests import run_significance_tests, winrate_binomial_test, plain_english_verdict, VERDICT_NOT_ENOUGH, VERDICT_REAL_EDGE
 
 # Shared fixtures
 
@@ -289,3 +289,126 @@ class TestPValues:
         assert bci["ci_lower"] is not None
         assert bci["ci_upper"] is not None
         assert bci["ci_lower"] <= bci["ci_upper"]
+
+
+# 7. Win-rate binomial test — coin-flip reality check
+
+# 25 wins, 5 losses: 83.3% win rate — well above chance
+HIGH_WIN_RATE_TRADES = [2.0] * 25 + [-1.0] * 5
+
+# Exactly 50/50: 15 wins, 15 losses
+COIN_FLIP_TRADES = [1.0] * 15 + [-1.0] * 15
+
+# 5 wins, 25 losses: 16.7% win rate — well below chance
+LOW_WIN_RATE_TRADES = [1.0] * 5 + [-1.0] * 25
+
+
+class TestWinrateBinomialTest:
+    def test_empty_trade_list_returns_none(self):
+        result = winrate_binomial_test([])
+        assert result["win_rate"] is None
+        assert result["wins"] == 0
+        assert result["losses"] == 0
+        assert result["significant"] is False
+        assert "no nonzero" in result["interpretation"].lower()
+
+    def test_all_breakeven_trades(self):
+        result = winrate_binomial_test([0, 0, 0, 0])
+        assert result["win_rate"] is None
+        assert result["wins"] == 0
+        assert result["losses"] == 0
+        assert result["significant"] is False
+        assert "no nonzero" in result["interpretation"].lower()
+    def test_high_win_rate_is_significant(self):
+        result = run_significance_tests(HIGH_WIN_RATE_TRADES)
+        assert result["winrate"]["significant"] is True
+
+    def test_high_win_rate_p_value_below_alpha(self):
+        result = run_significance_tests(HIGH_WIN_RATE_TRADES)
+        assert result["winrate"]["p_value"] < 0.05
+
+    def test_coin_flip_not_significant(self):
+        result = run_significance_tests(COIN_FLIP_TRADES)
+        assert result["winrate"]["significant"] is False
+
+    def test_coin_flip_p_value_above_alpha(self):
+        result = run_significance_tests(COIN_FLIP_TRADES)
+        assert result["winrate"]["p_value"] >= 0.05
+
+    def test_winning_trades_win_rate_above_half(self):
+        result = run_significance_tests(WINNING_TRADES)
+        assert result["winrate"]["win_rate"] > 0.5
+
+    def test_winning_trades_win_rate_significant(self):
+        # WINNING_TRADES has 25W/10L = 71.4% win rate
+        result = run_significance_tests(WINNING_TRADES)
+        assert result["winrate"]["significant"] is True
+
+    def test_noise_trades_win_rate_not_significant(self):
+        result = run_significance_tests(NOISE_TRADES)
+        assert result["winrate"]["significant"] is False
+
+    def test_win_rate_is_fraction(self):
+        for pnl in [WINNING_TRADES, NOISE_TRADES, HIGH_WIN_RATE_TRADES, COIN_FLIP_TRADES]:
+            wr = run_significance_tests(pnl)["winrate"]["win_rate"]
+            assert 0.0 <= wr <= 1.0
+
+    def test_interpretation_mentions_win_rate(self):
+        result = run_significance_tests(WINNING_TRADES)
+        assert "win rate" in result["winrate"]["interpretation"].lower()
+
+    def test_direct_below_50pct_is_significant(self):
+        # 5/30 wins = 16.7% — far below 50%, two-tailed test should catch this
+        result = winrate_binomial_test(LOW_WIN_RATE_TRADES)
+        assert result["significant"] is True
+        assert result["p_value"] < 0.05
+
+    def test_direct_custom_null_win_rate_runs(self):
+        # Comparing against a 70% null: result should be a valid p-value
+        result = winrate_binomial_test([1.0] * 24 + [-1.0] * 6, null_win_rate=0.70)
+        assert result["p_value"] is not None
+        assert 0.0 <= result["p_value"] <= 1.0
+
+    def test_direct_high_win_rate_significant(self):
+        result = winrate_binomial_test([1.0] * 24 + [-1.0] * 6)
+        assert result["significant"] is True
+        assert result["p_value"] < 0.05
+
+
+# 8. Plain-English verdict
+
+
+PLAIN_ENGLISH_VERDICTS = {VERDICT_NOT_ENOUGH, VERDICT_REAL_EDGE}
+
+
+class TestPlainEnglishVerdict:
+    def test_not_significant_returns_not_enough(self):
+        # Coin-flip trades pass min_trades but have no edge — NOT_SIGNIFICANT path
+        result = run_significance_tests(COIN_FLIP_TRADES)
+        assert result["verdict"] == "NOT_SIGNIFICANT"
+        assert plain_english_verdict(COIN_FLIP_TRADES) == VERDICT_NOT_ENOUGH
+
+    def test_winning_trades_returns_real_edge(self):
+        assert plain_english_verdict(WINNING_TRADES) == VERDICT_REAL_EDGE
+
+    def test_noise_trades_returns_not_enough(self):
+        assert plain_english_verdict(NOISE_TRADES) == VERDICT_NOT_ENOUGH
+
+    def test_small_sample_returns_not_enough(self):
+        assert plain_english_verdict(SMALL_SAMPLE) == VERDICT_NOT_ENOUGH
+
+    def test_empty_list_returns_not_enough(self):
+        assert plain_english_verdict([]) == VERDICT_NOT_ENOUGH
+
+    def test_returns_one_of_two_valid_strings(self):
+        for pnl in [WINNING_TRADES, NOISE_TRADES, SMALL_SAMPLE, [], FLAT_TRADES]:
+            assert plain_english_verdict(pnl) in PLAIN_ENGLISH_VERDICTS
+
+    def test_custom_min_trades_affects_verdict(self):
+        # WINNING_TRADES (35) is significant at default min_trades=30
+        # Raising the bar to 50 should flip it to "not enough trades to know yet"
+        assert plain_english_verdict(WINNING_TRADES, min_trades=50) == VERDICT_NOT_ENOUGH
+
+    def test_returns_string(self):
+        assert isinstance(plain_english_verdict(WINNING_TRADES), str)
+
