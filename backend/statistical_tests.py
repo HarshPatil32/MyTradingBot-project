@@ -391,7 +391,9 @@ def winrate_binomial_test(
     Tests whether the observed win rate could arise by chance from a
     coin-flip process (50/50 random trades).
     """
-    n = len(pnl_list)
+    # Only count trades with nonzero P&L
+    nonzero_pnl = [p for p in pnl_list if p != 0]
+    n = len(nonzero_pnl)
     if n < 1:
         return {
             "win_rate": None,
@@ -399,10 +401,10 @@ def winrate_binomial_test(
             "losses": 0,
             "p_value": None,
             "significant": False,
-            "interpretation": "No trades provided.",
+            "interpretation": "No nonzero-P&L trades provided (all breakeven or empty).",
         }
 
-    wins = sum(1 for p in pnl_list if p > 0)
+    wins = sum(1 for p in nonzero_pnl if p > 0)
     losses = n - wins
     win_rate = wins / n
     p_val = _binomial_p_value(wins, n, null_win_rate)
