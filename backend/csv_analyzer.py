@@ -541,6 +541,51 @@ def calculate_pnl(trades: list[dict]) -> dict:
     }
 
 
+
+# Minimum winners and losers required before flagging the disposition effect
+MIN_TRADES_FOR_DISPOSITION_CHECK = 5
+# Losers must be held at least 50% longer than winners to trigger the warning
+DISPOSITION_EFFECT_THRESHOLD = 1.5
+
+def check_disposition_effect(pnl_data: dict) -> dict | None:
+    """Return a warning dict if losing trades are held significantly longer than winners.
+
+    Requires at least MIN_TRADES_FOR_DISPOSITION_CHECK winners and losers to avoid noise from tiny samples.
+    Returns None when there is insufficient data or no meaningful difference.
+    """
+    avg_winner_days = pnl_data.get("avg_holding_days_winners")
+    avg_loser_days = pnl_data.get("avg_holding_days_losers")
+
+    if avg_winner_days is None or avg_loser_days is None or avg_winner_days <= 0:
+        return None
+
+    trade_pnl = pnl_data.get("trade_pnl", [])
+    num_winners = sum(1 for t in trade_pnl if t.get("pnl", 0) > 0)
+    num_losers = sum(1 for t in trade_pnl if t.get("pnl", 0) < 0)
+
+    if num_winners < MIN_TRADES_FOR_DISPOSITION_CHECK or num_losers < MIN_TRADES_FOR_DISPOSITION_CHECK:
+        return None
+
+    # Guard against division by zero
+    if avg_winner_days == 0:
+        return None
+
+    if avg_loser_days / avg_winner_days < DISPOSITION_EFFECT_THRESHOLD:
+        return None
+
+    return {
+        "type": "disposition_effect",
+        "level": "warning",
+        "message": (
+            f"You held losing trades an average of {avg_loser_days} days, "
+            f"but winning trades only {avg_winner_days} days. "
+            "Holding losers much longer than winners is called the 'disposition effect' — "
+            "a common bias where traders wait and hope a loss will turn around. "
+            "Consider using stop-losses to cut losing trades earlier."
+        ),
+    }
+
+
 def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT_COMMISSION_PER_TRADE, slippage_pct: float = DEFAULT_SLIPPAGE_PCT, spread_pct: float = DEFAULT_SPREAD_PCT) -> dict:
     """Main entry point: sanitize, detect format, parse, validate, and return a normalised trade dict for real trade history uploads."""
     try:
@@ -570,6 +615,10 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
         bid_ask_spread = calculate_bid_ask_spread(trades, spread_pct=spread_pct) if trades else {}
         pnl_values = [t["pnl"] for t in pnl.get("trade_pnl", [])]
         significance = run_significance_tests(pnl_values) if pnl_values else None
+        # Only call disposition effect check once, after all other warnings
+        disposition_warning = check_disposition_effect(pnl)
+        if disposition_warning:
+            warnings.append(disposition_warning)
         result = {
             "format": fmt,
             "trades": trades,
@@ -632,6 +681,10 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
                         "to draw reliable conclusions."
                     ),
                 })
+            # Only call disposition effect check once, after all other warnings
+            disposition_warning = check_disposition_effect(pnl)
+            if disposition_warning:
+                warnings.append(disposition_warning)
             pnl_values = [t["pnl"] for t in pnl.get("trade_pnl", [])]
             significance = run_significance_tests(pnl_values)
             result = {
