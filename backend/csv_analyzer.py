@@ -586,6 +586,97 @@ def check_disposition_effect(pnl_data: dict) -> dict | None:
     }
 
 
+
+# Costs must eat this fraction of gross profit before the overtrading flag fires
+OVERTRADING_COST_DRAG_THRESHOLD = 0.20
+# More than one round-trip per trading day is considered high frequency
+OVERTRADING_FREQUENCY_THRESHOLD = 252
+# Minimum trades required for frequency/cost drag to be meaningful
+MIN_TRADES_FOR_FREQUENCY_SIGNAL = 20
+
+
+def check_overtrading(
+    pnl_data: dict,
+    commissions: dict,
+    slippage: dict,
+    bid_ask_spread: dict,
+) -> dict | None:
+    """Return a warning dict if trading costs materially drag on returns.
+
+    Only fires when there are enough closed trades, gross profit is positive,
+    and total costs exceed OVERTRADING_COST_DRAG_THRESHOLD of that profit.
+    """
+    trade_pnl = pnl_data.get("trade_pnl", [])
+    num_closed = len(trade_pnl)
+
+    # Input guards: all cost dicts must be present and numeric
+    def _safe_cost(d, key):
+        try:
+            return float(d.get(key, 0.0))
+        except Exception:
+            return 0.0
+
+    if not isinstance(commissions, dict) or not isinstance(slippage, dict) or not isinstance(bid_ask_spread, dict):
+        return None
+
+    if num_closed < MIN_TRADES_FOR_FREQUENCY_SIGNAL:
+        return None
+
+    gross_pnl = pnl_data.get("total_pnl", 0.0)
+    if not isinstance(gross_pnl, (int, float)) or gross_pnl <= 0:
+        return None
+
+    total_costs = (
+        _safe_cost(commissions, "total_commission_usd")
+        + _safe_cost(slippage, "total_slippage_usd")
+        + _safe_cost(bid_ask_spread, "total_spread_usd")
+    )
+
+    cost_drag_pct = total_costs / gross_pnl if gross_pnl else 0.0
+    if cost_drag_pct < OVERTRADING_COST_DRAG_THRESHOLD:
+        return None
+
+    # Annualise trade count using trading days (252/year)
+    trades_per_year = None
+    try:
+        buy_dates = [t["buy_date"] for t in trade_pnl if t.get("buy_date")]
+        sell_dates = [t["sell_date"] for t in trade_pnl if t.get("sell_date")]
+        if buy_dates and sell_dates:
+            first_date = min(buy_dates)
+            last_date = max(sell_dates)
+            total_days = (
+                datetime.strptime(last_date, "%Y-%m-%d")
+                - datetime.strptime(first_date, "%Y-%m-%d")
+            ).days
+            if total_days > 0:
+                # Use 252 trading days per year
+                trades_per_year = round(num_closed * 252 / total_days, 1)
+    except Exception:
+        pass
+
+    drag_pct_display = round(cost_drag_pct * 100, 1)
+    freq_part = (
+        f" at a rate of {trades_per_year:.0f} trades/year"
+        if trades_per_year is not None
+        else ""
+    )
+
+    return {
+        "type": "overtrading",
+        "level": "warning",
+        "message": (
+            f"Costs (commissions + slippage + spread) total ${total_costs:.2f}, "
+            f"which is {drag_pct_display}% of gross profit. "
+            f"You made {num_closed} closed trades{freq_part}. "
+            "High trade frequency may be causing costs to materially drag on returns. "
+            "Consider reducing trade frequency or reviewing position sizing."
+        ),
+        "cost_drag_pct": round(cost_drag_pct, 4),
+        "total_costs_usd": round(total_costs, 2),
+        "num_closed_trades": num_closed,
+        "trades_per_year": trades_per_year,
+    }
+
 def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT_COMMISSION_PER_TRADE, slippage_pct: float = DEFAULT_SLIPPAGE_PCT, spread_pct: float = DEFAULT_SPREAD_PCT) -> dict:
     """Main entry point: sanitize, detect format, parse, validate, and return a normalised trade dict for real trade history uploads."""
     try:
@@ -619,6 +710,9 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
         disposition_warning = check_disposition_effect(pnl)
         if disposition_warning:
             warnings.append(disposition_warning)
+        overtrading_warning = check_overtrading(pnl, commissions, slippage, bid_ask_spread)
+        if overtrading_warning:
+            warnings.append(overtrading_warning)
         result = {
             "format": fmt,
             "trades": trades,
