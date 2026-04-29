@@ -504,11 +504,32 @@ def calculate_pnl(trades: list[dict]) -> dict:
         else 0.0
     )
 
+    # Helper to safely compute holding period in days
+    def _holding_days(t):
+        try:
+            buy = t["buy_date"]
+            sell = t["sell_date"]
+            if not (buy and sell):
+                return None
+            days = (datetime.strptime(sell, "%Y-%m-%d") - datetime.strptime(buy, "%Y-%m-%d")).days
+            return days if days >= 0 else None
+        except Exception:
+            return None
+
+    # Only count trades with pnl > 0 (exclude breakeven and losses)
+    # This is intentional: see test coverage and docstring
+    winner_days = [
+        d for t in trade_pnl if t["pnl"] > 0
+        for d in [_holding_days(t)] if d is not None
+    ]
+    avg_holding_days_winners = round(float(statistics.mean(winner_days)), 2) if winner_days else None
+
     return {
         "trade_pnl": trade_pnl,
         "equity_curve": equity_curve,
         "total_pnl": round(cumulative_pnl, 4),
         "total_return_pct": total_return_pct,
+        "avg_holding_days_winners": avg_holding_days_winners,
     }
 
 

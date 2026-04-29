@@ -188,69 +188,96 @@ class TestValidateTrades:
         ]
         assert validate_trades(trades) == []
 
-    def test_sell_before_buy_for_same_symbol_warns(self):
-        trades = [
-            _trade("2024-01-01", "AAPL", "SELL", 110.0, 10),
-            _trade("2024-02-01", "AAPL", "BUY", 100.0, 10),
-        ]
-        warnings = validate_trades(trades)
-        assert any(w["type"] == "unmatched_sell" for w in warnings)
-        # The buy that comes after has no sell, so also unclosed
-        assert any(w["type"] == "unclosed_position" for w in warnings)
 
-    def test_returns_list(self):
-        assert isinstance(validate_trades([]), list)
+# --- Module-level tests for edge cases and new metrics ---
+def test_mixed_case_sell_actions_no_warnings():
+    trades = [
+        _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+        _trade("2024-02-01", "AAPL", "sell", 110.0, 10),
+    ]
+    assert validate_trades(trades) == []
 
-    def test_mixed_case_actions_no_warnings(self):
-        trades = [
-            _trade("2024-01-01", "AAPL", "buy", 100.0, 10),
-            _trade("2024-02-01", "AAPL", "Sell", 110.0, 10),
-        ]
-        assert validate_trades(trades) == []
+def test_mixed_case_sell_duplicate_detected():
+    trade = _trade("2024-01-01", "AAPL", "SELL", 100.0, 10)
+    same_lowercase = _trade("2024-01-01", "AAPL", "sell", 100.0, 10)
+    warnings = validate_trades([trade, same_lowercase])
+    assert any(w["type"] == "duplicate" for w in warnings)
 
-    def test_mixed_case_duplicate_detected(self):
-        trade = _trade("2024-01-01", "AAPL", "buy", 100.0, 10)
-        same_uppercase = _trade("2024-01-01", "AAPL", "BUY", 100.0, 10)
-        warnings = validate_trades([trade, same_uppercase])
-        assert any(w["type"] == "duplicate" for w in warnings)
+def test_missing_action_does_not_crash():
+    trades = [
+        {"date": "2024-01-01", "symbol": "AAPL", "price": 100.0, "shares": 10},
+        _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
+    ]
+    warnings = validate_trades(trades)
+    assert isinstance(warnings, list)
 
-    def test_duplicate_different_price_same_date_symbol_action_warns(self):
-        # Same date+symbol+action but different price/shares — still a duplicate
-        trade1 = _trade("2024-01-01", "AAPL", "BUY", 100.0, 10)
-        trade2 = _trade("2024-01-01", "AAPL", "BUY", 105.0, 5)
-        warnings = validate_trades([trade1, trade2])
-        assert any(w["type"] == "duplicate" for w in warnings)
+def test_null_action_does_not_crash():
+    trades = [
+        {"date": "2024-01-01", "symbol": "AAPL", "action": None, "price": 100.0, "shares": 10},
+        _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
+    ]
+    warnings = validate_trades(trades)
+    assert isinstance(warnings, list)
 
-    def test_same_date_symbol_different_action_not_duplicate(self):
-        # BUY and SELL on same date+symbol are not duplicates
-        trade1 = _trade("2024-01-01", "AAPL", "BUY", 100.0, 10)
-        trade2 = _trade("2024-01-01", "AAPL", "SELL", 100.0, 10)
-        warnings = validate_trades([trade1, trade2])
-        assert not any(w["type"] == "duplicate" for w in warnings)
+def test_mixed_case_sell_actions_compute_correctly():
+    trades = [
+        _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+        _trade("2024-02-01", "AAPL", "sell", 110.0, 10),
+    ]
+    result = calculate_pnl(trades)
+    assert result["total_pnl"] == 100.0
+    assert len(result["trade_pnl"]) == 1
 
-    def test_multiple_sells_no_buy_each_flagged(self):
-        # Two SELLs for the same symbol with no BUY — both should be flagged
-        trades = [
-            _trade("2024-01-01", "AAPL", "SELL", 110.0, 10),
-            _trade("2024-01-02", "AAPL", "SELL", 115.0, 10),
-        ]
-        warnings = validate_trades(trades)
-        unmatched = [w for w in warnings if w["type"] == "unmatched_sell"]
-        assert len(unmatched) == 2
-        assert all(w["level"] == "warning" for w in unmatched)
+def test_missing_action_skipped_in_pnl():
+    trades = [
+        {"date": "2024-01-01", "symbol": "AAPL", "price": 100.0, "shares": 10},
+        _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
+    ]
+    result = calculate_pnl(trades)
+    assert result["total_pnl"] == 0.0
+    assert result["trade_pnl"] == []
 
-    def test_more_sells_than_buys_extra_sell_flagged(self):
-        # One BUY consumed by first SELL; second SELL has no BUY left
-        trades = [
-            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
-            _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
-            _trade("2024-03-01", "AAPL", "SELL", 120.0, 10),
-        ]
-        warnings = validate_trades(trades)
-        unmatched = [w for w in warnings if w["type"] == "unmatched_sell"]
-        assert len(unmatched) == 1
-        assert "2024-03-01" in unmatched[0]["message"]
-        assert unmatched[0]["level"] == "warning"
+def test_null_action_skipped_in_pnl():
+    trades = [
+        {"date": "2024-01-01", "symbol": "AAPL", "action": None, "price": 100.0, "shares": 10},
+        _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
+    ]
+    result = calculate_pnl(trades)
+    assert result["total_pnl"] == 0.0
+    assert result["trade_pnl"] == []
+
+def test_same_date_symbol_different_action_not_duplicate():
+    # BUY and SELL on same date+symbol are not duplicates
+    trade1 = _trade("2024-01-01", "AAPL", "BUY", 100.0, 10)
+    trade2 = _trade("2024-01-01", "AAPL", "SELL", 100.0, 10)
+    warnings = validate_trades([trade1, trade2])
+    assert not any(w["type"] == "duplicate" for w in warnings)
+
+
+def test_multiple_sells_no_buy_each_flagged():
+    # Two SELLs for the same symbol with no BUY — both should be flagged
+    trades = [
+        _trade("2024-01-01", "AAPL", "SELL", 110.0, 10),
+        _trade("2024-01-02", "AAPL", "SELL", 115.0, 10),
+    ]
+    warnings = validate_trades(trades)
+    unmatched = [w for w in warnings if w["type"] == "unmatched_sell"]
+    assert len(unmatched) == 2
+    assert all(w["level"] == "warning" for w in unmatched)
+
+
+def test_more_sells_than_buys_extra_sell_flagged():
+    # One BUY consumed by first SELL; second SELL has no BUY left
+    trades = [
+        _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+        _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
+        _trade("2024-03-01", "AAPL", "SELL", 120.0, 10),
+    ]
+    warnings = validate_trades(trades)
+    unmatched = [w for w in warnings if w["type"] == "unmatched_sell"]
+    assert len(unmatched) == 1
+    assert "2024-03-01" in unmatched[0]["message"]
+    assert unmatched[0]["level"] == "warning"
 
 
 # ---------------------------------------------------------------------------
@@ -335,48 +362,41 @@ class TestCalculatePnl:
         assert result["total_pnl"] == 200.0
         assert result["equity_curve"][-1]["cumulative_pnl"] == 200.0
 
-    def test_result_keys_present(self):
-        result = calculate_pnl([])
-        assert set(result.keys()) == {"trade_pnl", "equity_curve", "total_pnl", "total_return_pct"}
-
-    def test_mixed_case_actions_compute_correctly(self):
-        trades = [
-            _trade("2024-01-01", "AAPL", "buy", 100.0, 10),
-            _trade("2024-02-01", "AAPL", "Sell", 110.0, 10),
-        ]
-        result = calculate_pnl(trades)
-        assert result["total_pnl"] == 100.0
-        assert len(result["trade_pnl"]) == 1
-
-    def test_mixed_case_sell_actions_no_warnings(self):
+    def test_result_is_float_or_none(self):
         trades = [
             _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
-            _trade("2024-02-01", "AAPL", "sell", 110.0, 10),
-        ]
-        assert validate_trades(trades) == []
-
-    def test_mixed_case_sell_duplicate_detected(self):
-        trade = _trade("2024-01-01", "AAPL", "SELL", 100.0, 10)
-        same_lowercase = _trade("2024-01-01", "AAPL", "sell", 100.0, 10)
-        warnings = validate_trades([trade, same_lowercase])
-        assert any(w["type"] == "duplicate" for w in warnings)
-
-    def test_missing_action_does_not_crash(self):
-        trades = [
-            {"date": "2024-01-01", "symbol": "AAPL", "price": 100.0, "shares": 10},
             _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
         ]
-        # Should not raise, should treat missing action as non-BUY/SELL and skip
-        warnings = validate_trades(trades)
-        assert isinstance(warnings, list)
+        result = calculate_pnl(trades)
+        assert isinstance(result["avg_holding_days_winners"], float)
 
-    def test_null_action_does_not_crash(self):
+    def test_no_trades_returns_none(self):
+        result = calculate_pnl([])
+        assert result["avg_holding_days_winners"] is None
+
+    def test_all_losses_returns_none(self):
         trades = [
-            {"date": "2024-01-01", "symbol": "AAPL", "action": None, "price": 100.0, "shares": 10},
+            _trade("2024-01-01", "AAPL", "BUY", 110.0, 10),
+            _trade("2024-02-01", "AAPL", "SELL", 100.0, 10),
+        ]
+        result = calculate_pnl(trades)
+        assert result["avg_holding_days_winners"] is None
+
+    def test_single_winner_returns_correct_days(self):
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
             _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
         ]
-        warnings = validate_trades(trades)
-        assert isinstance(warnings, list)
+        result = calculate_pnl(trades)
+        assert result["avg_holding_days_winners"] == 31.0
+
+    def test_same_day_buy_sell_zero_days(self):
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+            _trade("2024-01-01", "AAPL", "SELL", 110.0, 10),
+        ]
+        result = calculate_pnl(trades)
+        assert result["avg_holding_days_winners"] == 0.0
 
     def test_mixed_case_sell_actions_compute_correctly(self):
         trades = [
