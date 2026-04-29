@@ -677,6 +677,58 @@ def check_overtrading(
         "trades_per_year": trades_per_year,
     }
 
+
+# Fraction of total trades in one symbol that triggers the concentration risk warning
+CONCENTRATION_RISK_THRESHOLD = 0.50
+# Minimum trades before the check is meaningful
+MIN_TRADES_FOR_CONCENTRATION_CHECK = 2
+
+
+def check_concentration_risk(trades: list[dict]) -> dict | None:
+    """Return a warning dict if more than 50% of trades are in a single symbol.
+
+    Concentration is measured by trade count, not position size or capital deployed.
+    Trades with a missing or empty symbol field are skipped and logged.
+    Returns None when there are too few trades or no symbol exceeds the threshold.
+    """
+    if len(trades) < MIN_TRADES_FOR_CONCENTRATION_CHECK:
+        return None
+
+    symbol_counts: dict[str, int] = {}
+    for trade in trades:
+        symbol = str(trade.get("symbol") or "").strip().upper()
+        if not symbol:
+            logger.warning("check_concentration_risk: trade skipped due to missing symbol: %r", trade)
+            continue
+        symbol_counts[symbol] = symbol_counts.get(symbol, 0) + 1
+
+    total = sum(symbol_counts.values())
+    if total == 0:
+        return None
+
+    most_traded = max(symbol_counts, key=lambda s: symbol_counts[s])
+    pct = symbol_counts[most_traded] / total
+
+    if pct <= CONCENTRATION_RISK_THRESHOLD:
+        return None
+
+    pct_display = round(pct * 100, 1)
+    return {
+        "type": "concentration_risk",
+        "level": "warning",
+        "message": (
+            f"{pct_display}% of your trades are in {most_traded} "
+            f"({symbol_counts[most_traded]} of {total}). "
+            "Having more than half your trades in a single symbol increases exposure to that asset. "
+            "Consider diversifying across more symbols to reduce concentration risk."
+        ),
+        "symbol": most_traded,
+        "trade_count": symbol_counts[most_traded],
+        "total_trades": total,
+        "concentration_pct": round(pct, 4),
+    }
+
+
 def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT_COMMISSION_PER_TRADE, slippage_pct: float = DEFAULT_SLIPPAGE_PCT, spread_pct: float = DEFAULT_SPREAD_PCT) -> dict:
     """Main entry point: sanitize, detect format, parse, validate, and return a normalised trade dict for real trade history uploads."""
     try:
@@ -713,6 +765,9 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
         overtrading_warning = check_overtrading(pnl, commissions, slippage, bid_ask_spread)
         if overtrading_warning:
             warnings.append(overtrading_warning)
+        concentration_warning = check_concentration_risk(trades)
+        if concentration_warning:
+            warnings.append(concentration_warning)
         result = {
             "format": fmt,
             "trades": trades,
@@ -779,6 +834,9 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
             disposition_warning = check_disposition_effect(pnl)
             if disposition_warning:
                 warnings.append(disposition_warning)
+            concentration_warning = check_concentration_risk(trades)
+            if concentration_warning:
+                warnings.append(concentration_warning)
             pnl_values = [t["pnl"] for t in pnl.get("trade_pnl", [])]
             significance = run_significance_tests(pnl_values)
             result = {

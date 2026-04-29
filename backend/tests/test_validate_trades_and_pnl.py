@@ -1,7 +1,7 @@
 """Tests for validate_trades() and calculate_pnl() in csv_analyzer."""
 import pytest
 
-from csv_analyzer import validate_trades, calculate_pnl
+from csv_analyzer import validate_trades, calculate_pnl, check_concentration_risk
 
 
 def _trade(date, symbol, action, price, shares):
@@ -503,3 +503,117 @@ class TestCalculatePnl:
         ]
         result = calculate_pnl(trades)
         assert result["avg_holding_days_losers"] is None
+
+
+# ---------------------------------------------------------------------------
+# check_concentration_risk
+# ---------------------------------------------------------------------------
+
+class TestCheckConcentrationRisk:
+    def test_all_trades_one_symbol_warns(self):
+        trades = [_trade("2024-01-01", "AAPL", "BUY", 100.0, 10)] * 4
+        result = check_concentration_risk(trades)
+        assert result is not None
+        assert result["type"] == "concentration_risk"
+        assert result["level"] == "warning"
+
+    def test_warning_contains_symbol_name(self):
+        trades = [_trade("2024-01-01", "AAPL", "BUY", 100.0, 10)] * 4
+        result = check_concentration_risk(trades)
+        assert "AAPL" in result["message"]
+
+    def test_majority_in_one_symbol_warns(self):
+        # 3 AAPL + 1 MSFT = 75% AAPL -> should warn
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+            _trade("2024-01-02", "AAPL", "SELL", 110.0, 10),
+            _trade("2024-01-03", "AAPL", "BUY", 105.0, 10),
+            _trade("2024-01-04", "MSFT", "BUY", 200.0, 5),
+        ]
+        result = check_concentration_risk(trades)
+        assert result is not None
+        assert result["symbol"] == "AAPL"
+        assert result["concentration_pct"] == 0.75
+
+    def test_exactly_50_percent_does_not_warn(self):
+        # 2 AAPL + 2 MSFT = exactly 50% each -> no warning
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+            _trade("2024-01-02", "AAPL", "SELL", 110.0, 10),
+            _trade("2024-01-03", "MSFT", "BUY", 200.0, 5),
+            _trade("2024-01-04", "MSFT", "SELL", 210.0, 5),
+        ]
+        result = check_concentration_risk(trades)
+        assert result is None
+
+    def test_even_split_three_symbols_no_warning(self):
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+            _trade("2024-01-02", "MSFT", "BUY", 200.0, 5),
+            _trade("2024-01-03", "TSLA", "BUY", 300.0, 2),
+        ]
+        result = check_concentration_risk(trades)
+        assert result is None
+
+    def test_single_trade_returns_none(self):
+        trades = [_trade("2024-01-01", "AAPL", "BUY", 100.0, 10)]
+        result = check_concentration_risk(trades)
+        assert result is None
+
+    def test_empty_trades_returns_none(self):
+        result = check_concentration_risk([])
+        assert result is None
+
+    def test_result_has_required_keys(self):
+        trades = [_trade("2024-01-01", "AAPL", "BUY", 100.0, 10)] * 3
+        result = check_concentration_risk(trades)
+        assert result is not None
+        for key in ("type", "level", "message", "symbol", "trade_count", "total_trades", "concentration_pct"):
+            assert key in result
+
+    def test_trade_count_and_total_are_correct(self):
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+            _trade("2024-01-02", "AAPL", "SELL", 110.0, 10),
+            _trade("2024-01-03", "AAPL", "BUY", 105.0, 10),
+            _trade("2024-01-04", "MSFT", "BUY", 200.0, 5),
+        ]
+        result = check_concentration_risk(trades)
+        assert result["trade_count"] == 3
+        assert result["total_trades"] == 4
+
+    def test_symbol_normalized_to_uppercase(self):
+        trades = [
+            {"date": "2024-01-01", "symbol": "aapl", "action": "BUY", "price": 100.0, "shares": 10},
+            {"date": "2024-01-02", "symbol": "aapl", "action": "SELL", "price": 110.0, "shares": 10},
+            {"date": "2024-01-03", "symbol": "aapl", "action": "BUY", "price": 105.0, "shares": 10},
+            {"date": "2024-01-04", "symbol": "MSFT", "action": "BUY", "price": 200.0, "shares": 5},
+        ]
+        result = check_concentration_risk(trades)
+        assert result is not None
+        assert result["symbol"] == "AAPL"
+
+    def test_trades_with_missing_symbol_are_skipped(self):
+        # Trades with missing/empty symbol are skipped; only valid symbols are counted
+        trades = [
+            {"date": "2024-01-01", "symbol": None, "action": "BUY", "price": 100.0, "shares": 10},
+            {"date": "2024-01-02", "symbol": "", "action": "BUY", "price": 100.0, "shares": 10},
+            _trade("2024-01-03", "AAPL", "BUY", 100.0, 10),
+            _trade("2024-01-04", "AAPL", "SELL", 110.0, 10),
+            _trade("2024-01-05", "MSFT", "BUY", 200.0, 5),
+        ]
+        # 2 valid AAPL + 1 MSFT; missing-symbol trades not counted
+        result = check_concentration_risk(trades)
+        # 2/3 AAPL > 50%, so should warn
+        assert result is not None
+        assert result["symbol"] == "AAPL"
+        assert result["total_trades"] == 3
+
+    def test_all_trades_missing_symbol_returns_none(self):
+        trades = [
+            {"date": "2024-01-01", "symbol": None, "action": "BUY", "price": 100.0, "shares": 10},
+            {"date": "2024-01-02", "symbol": "", "action": "BUY", "price": 100.0, "shares": 10},
+        ]
+        result = check_concentration_risk(trades)
+        assert result is None
+
