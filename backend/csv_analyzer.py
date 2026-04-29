@@ -524,12 +524,20 @@ def calculate_pnl(trades: list[dict]) -> dict:
     ]
     avg_holding_days_winners = round(float(statistics.mean(winner_days)), 2) if winner_days else None
 
+    # Mean days held for trades that closed at a loss (pnl < 0, excluding breakeven)
+    loser_days = [
+        d for t in trade_pnl if t["pnl"] < 0
+        for d in [_holding_days(t)] if d is not None
+    ]
+    avg_holding_days_losers = round(float(statistics.mean(loser_days)), 2) if loser_days else None
+
     return {
         "trade_pnl": trade_pnl,
         "equity_curve": equity_curve,
         "total_pnl": round(cumulative_pnl, 4),
         "total_return_pct": total_return_pct,
         "avg_holding_days_winners": avg_holding_days_winners,
+        "avg_holding_days_losers": avg_holding_days_losers,
     }
 
 

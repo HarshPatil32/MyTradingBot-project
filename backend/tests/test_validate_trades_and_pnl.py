@@ -424,3 +424,82 @@ class TestCalculatePnl:
         result = calculate_pnl(trades)
         assert result["total_pnl"] == 0.0
         assert result["trade_pnl"] == []
+
+    # avg_holding_days_losers tests
+
+    def test_no_trades_losers_returns_none(self):
+        result = calculate_pnl([])
+        assert result["avg_holding_days_losers"] is None
+
+    def test_all_winners_losers_returns_none(self):
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+            _trade("2024-02-01", "AAPL", "SELL", 110.0, 10),
+        ]
+        result = calculate_pnl(trades)
+        assert result["avg_holding_days_losers"] is None
+
+    def test_single_loser_returns_correct_days(self):
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 110.0, 10),
+            _trade("2024-02-01", "AAPL", "SELL", 100.0, 10),
+        ]
+        result = calculate_pnl(trades)
+        assert result["avg_holding_days_losers"] == 31.0
+
+    def test_losers_is_float(self):
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 110.0, 10),
+            _trade("2024-02-01", "AAPL", "SELL", 100.0, 10),
+        ]
+        result = calculate_pnl(trades)
+        assert isinstance(result["avg_holding_days_losers"], float)
+
+    def test_breakeven_excluded_from_losers(self):
+        # Breakeven trade (pnl == 0) should not be counted
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+            _trade("2024-02-01", "AAPL", "SELL", 100.0, 10),
+        ]
+        result = calculate_pnl(trades)
+        assert result["avg_holding_days_losers"] is None
+
+    def test_mean_holding_days_losers_multiple(self):
+        # Loser 1: 10 days, Loser 2: 20 days -> mean = 15
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 110.0, 10),
+            _trade("2024-01-11", "AAPL", "SELL", 100.0, 10),
+            _trade("2024-02-01", "MSFT", "BUY", 200.0, 5),
+            _trade("2024-02-21", "MSFT", "SELL", 190.0, 5),
+        ]
+        result = calculate_pnl(trades)
+        assert result["avg_holding_days_losers"] == 15.0
+
+    def test_same_day_buy_sell_loser_zero_days(self):
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 110.0, 10),
+            _trade("2024-01-01", "AAPL", "SELL", 100.0, 10),
+        ]
+        result = calculate_pnl(trades)
+        assert result["avg_holding_days_losers"] == 0.0
+
+    def test_winners_and_losers_computed_independently(self):
+        # Winner: 10 days, Loser: 20 days
+        trades = [
+            _trade("2024-01-01", "AAPL", "BUY", 100.0, 10),
+            _trade("2024-01-11", "AAPL", "SELL", 110.0, 10),
+            _trade("2024-02-01", "MSFT", "BUY", 200.0, 5),
+            _trade("2024-02-21", "MSFT", "SELL", 190.0, 5),
+        ]
+        result = calculate_pnl(trades)
+        assert result["avg_holding_days_winners"] == 10.0
+        assert result["avg_holding_days_losers"] == 20.0
+
+    def test_avg_holding_days_losers_missing_dates(self):
+        # Should return None if dates are missing
+        trades = [
+            {"date": None, "symbol": "AAPL", "action": "BUY", "price": 110.0, "shares": 10},
+            {"date": None, "symbol": "AAPL", "action": "SELL", "price": 100.0, "shares": 10},
+        ]
+        result = calculate_pnl(trades)
+        assert result["avg_holding_days_losers"] is None
