@@ -20,6 +20,7 @@ import pytest
 from app import TRADING_MODULES_AVAILABLE
 
 INITIAL_BALANCE = 100_000
+MOCK_FINAL = 120_000.0
 _MOCK_YF = "test_against_SP.yf.download"
 _MOCK_SPY = "test_against_SP.get_spy_investment"
 
@@ -185,7 +186,7 @@ if TRADING_MODULES_AVAILABLE:
 # generate_spy_monthly_performance - month range and count
 # ---------------------------------------------------------------------------
 
-MOCK_FINAL = 120_000.0
+
 
 
 

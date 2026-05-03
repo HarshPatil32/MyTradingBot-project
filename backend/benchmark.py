@@ -1,5 +1,5 @@
 """
-Fetches SPY historical returns over the date range of uploaded trades for benchmarking.
+Fetches historical returns for a given ticker over the date range of uploaded trades.
 """
 
 from __future__ import annotations
@@ -12,14 +12,18 @@ import yfinance as yf
 logger = logging.getLogger(__name__)
 
 
-def fetch_spy_benchmark(trades: list[dict]) -> dict | None:
-    """Return SPY return data covering the date range of the given trades.
+def fetch_benchmark(trades: list[dict], ticker: str) -> dict | None:
+    """Return return data for the given ticker covering the date range of the given trades.
 
-    Extracts the earliest and latest trade dates, fetches SPY adjusted close
-    prices via yfinance, and returns a summary dict for benchmarking.
+    Extracts the earliest and latest trade dates, fetches adjusted close prices
+    via yfinance, and returns a summary dict for benchmarking.
     Returns None if trades are empty or data is unavailable.
     """
     if not trades:
+        return None
+
+    if not ticker or not ticker.strip():
+        logger.warning("fetch_benchmark called with empty ticker")
         return None
 
     dates = []
@@ -41,14 +45,14 @@ def fetch_spy_benchmark(trades: list[dict]) -> dict | None:
     fetch_end = end + timedelta(days=1)
 
     try:
-        data = yf.download("SPY", start=start, end=fetch_end, auto_adjust=True, progress=False)
+        data = yf.download(ticker, start=start, end=fetch_end, auto_adjust=True, progress=False)
         data.columns = data.columns.str.lower()
     except Exception as exc:
-        logger.warning("SPY benchmark fetch failed: %s", exc)
+        logger.warning("%s benchmark fetch failed: %s", ticker, exc)
         return None
 
     if data.empty:
-        logger.warning("SPY benchmark: no data available for %s to %s", start.date(), end.date())
+        logger.warning("%s benchmark: no data available for %s to %s", ticker, start.date(), end.date())
         return None
 
     data = data.sort_index()
@@ -56,7 +60,7 @@ def fetch_spy_benchmark(trades: list[dict]) -> dict | None:
     end_price = float(data["close"].iloc[-1])
 
     if start_price == 0:
-        logger.warning("SPY benchmark: start price is zero, cannot compute return")
+        logger.warning("%s benchmark: start price is zero, cannot compute return", ticker)
         return None
 
     total_return_pct = round((end_price - start_price) / start_price * 100, 4)
