@@ -47,6 +47,23 @@ DEFAULT_CI_LEVEL: float = 0.95
 VERDICT_NOT_ENOUGH = "not enough trades to know yet"
 VERDICT_REAL_EDGE = "your win rate looks like a real edge"
 
+VERDICT_DESCRIPTIONS: dict[str, str] = {
+    "SIGNIFICANT": (
+        "Both the t-test and bootstrap confidence interval agree that your results "
+        "are unlikely to be explained by luck alone. This is a positive signal, "
+        "but keep validating on new data before trading live."
+    ),
+    "NOT_SIGNIFICANT": (
+        "The tests could not confirm a genuine edge. Your results may still be "
+        "real, but we cannot rule out random chance with the current data. "
+        "More trades or a stronger strategy are needed."
+    ),
+    "INSUFFICIENT_DATA": (
+        f"At least {DEFAULT_MIN_TRADES} trades are recommended for these tests to be "
+        "reliable. Add more trade history and re-run the analysis."
+    ),
+}
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -482,10 +499,16 @@ def run_significance_tests(
     if n < 2:
         return {
             "verdict": "INSUFFICIENT_DATA",
+            "verdict_description": VERDICT_DESCRIPTIONS["INSUFFICIENT_DATA"],
             "confidence_level": ci_level,
             "summary": "Not enough trades to run any significance test (minimum 2 required).",
             "trade_count": n,
             "min_trade_count_met": False,
+            "min_trade_count_description": (
+                f"At least {min_trades} trades are needed so that statistical patterns "
+                "are likely to hold up — smaller samples are too easily distorted by a "
+                "few lucky or unlucky trades."
+            ),
             "ttest": ttest_vs_zero(pnl, alpha),
             "bootstrap_ci": bootstrap_confidence_interval(pnl, ci_level, bootstrap_iters, bootstrap_seed),
             "sharpe": sharpe_significance(pnl, risk_free_per_trade, alpha),
@@ -553,10 +576,16 @@ def run_significance_tests(
 
     return {
         "verdict": verdict,
+        "verdict_description": VERDICT_DESCRIPTIONS.get(verdict, ""),
         "confidence_level": ci_level,
         "summary": summary,
         "trade_count": n,
         "min_trade_count_met": count_check["met"],
+        "min_trade_count_description": (
+            f"At least {min_trades} trades are needed so that statistical patterns "
+            "are likely to hold up — smaller samples are too easily distorted by a "
+            "few lucky or unlucky trades."
+        ),
         "ttest": tt,
         "bootstrap_ci": bci,
         "sharpe": sr,

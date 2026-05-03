@@ -566,11 +566,16 @@ def calculate_win_rate(trades: Any) -> dict:
             "num_winning_trades": 0,
             "num_losing_trades":  0,
             "low_sample_warning": True,
+            "low_sample_warning_description": (
+                "No closed trades were found, so a win rate cannot be calculated. "
+                "Upload a trade history that includes both entries and exits."
+            ),
             "closed_trade_count": 0,
         }
 
     num_wins   = sum(1 for nt in closed if nt.profit > 0)
     num_losses = num_closed - num_wins
+    _low_sample = num_closed < MIN_CLOSED_TRADES_FOR_CONCLUSIONS
 
     return {
         "win_rate_pct":       round(num_wins / num_closed * 100, 4),
@@ -578,7 +583,17 @@ def calculate_win_rate(trades: Any) -> dict:
         "num_closed_trades":  num_closed,
         "num_winning_trades": num_wins,
         "num_losing_trades":  num_losses,
-        "low_sample_warning": num_closed < MIN_CLOSED_TRADES_FOR_CONCLUSIONS,
+        "low_sample_warning": _low_sample,
+        "low_sample_warning_description": (
+            (
+                f"Only {num_closed} closed trades were found — fewer than the "
+                f"{MIN_CLOSED_TRADES_FOR_CONCLUSIONS} needed for a reliable win rate. "
+                "A short lucky or unlucky streak could make this number look very different "
+                "from your long-run performance. Add more trade history for a stable read."
+            ) if _low_sample else (
+                f"{num_closed} closed trades — enough for a reliable win rate figure."
+            )
+        ),
         "closed_trade_count": num_closed,
     }
 
@@ -733,6 +748,15 @@ def calculate_real_costs(
         "input_summary": {
             "num_trades":      len(normalised_check),
             "is_summary_mode": is_summary_mode,
+            "is_summary_mode_description": (
+                "Analysis ran in summary mode — your input contained only aggregate "
+                "totals (e.g. final balance, overall win rate) rather than individual "
+                "trade records. Cost estimates are therefore approximations. "
+                "Upload a detailed trade list for trade-by-trade precision."
+            ) if is_summary_mode else (
+                "Analysis ran on individual trade records, so cost figures are "
+                "calculated precisely for each entry and exit."
+            ),
             "account_size":    account_size,
         },
         "commissions":   comm,

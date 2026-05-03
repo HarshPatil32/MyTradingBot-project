@@ -62,6 +62,17 @@ _FORMULA_CHARS: frozenset[str] = frozenset({"=", "+", "@"})
 # Valid ticker: uppercase letters, digits, dots, hyphens; 1-20 chars total
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]([A-Z0-9.\-]{0,19})?$")
 
+FORMAT_DESCRIPTIONS: dict[str, str] = {
+    "detailed": (
+        "Your file contains individual trade records (buy/sell entries). "
+        "All cost and statistical calculations use your exact trade history."
+    ),
+    "summary": (
+        "Your file contains summary totals only (e.g. overall win rate, final balance). "
+        "Cost estimates will be approximations because individual trade records are not available."
+    ),
+}
+
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -740,7 +751,12 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
             sufficiency_warning = check_trade_count_sufficiency(summary.get("num_trades", 0))
             if sufficiency_warning:
                 warnings.append(sufficiency_warning)
-            return {"format": fmt, "summary": summary, "warnings": warnings}
+            return {
+                "format": fmt,
+                "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
+                "summary": summary,
+                "warnings": warnings,
+            }
 
         trades = parse_detailed(clean) or []
         all_issues = validate_trades(trades) or []
@@ -770,6 +786,7 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
             warnings.append(concentration_warning)
         result = {
             "format": fmt,
+            "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
             "trades": trades,
             "warnings": warnings,
             "notices": notices,
@@ -801,6 +818,7 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
                     })
                 result = {
                     "format": fmt,
+                    "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
                     "summary": summary,
                     "trades": [],
                     "warnings": summary_warnings,
@@ -841,6 +859,7 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
             significance = run_significance_tests(pnl_values)
             result = {
                 "format": fmt,
+                "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
                 "trades": trades,
                 "warnings": warnings,
                 "notices": notices,
