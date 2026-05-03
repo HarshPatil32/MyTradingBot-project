@@ -62,6 +62,17 @@ _FORMULA_CHARS: frozenset[str] = frozenset({"=", "+", "@"})
 # Valid ticker: uppercase letters, digits, dots, hyphens; 1-20 chars total
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]([A-Z0-9.\-]{0,19})?$")
 
+FORMAT_DESCRIPTIONS: dict[str, str] = {
+    "detailed": (
+        "Your file contains individual trade records (buy/sell entries). "
+        "All cost and statistical calculations use your exact trade history."
+    ),
+    "summary": (
+        "Your file contains summary totals only (e.g. overall win rate, final balance). "
+        "Cost estimates will be approximations because individual trade records are not available."
+    ),
+}
+
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -504,11 +515,228 @@ def calculate_pnl(trades: list[dict]) -> dict:
         else 0.0
     )
 
+    # Helper to safely compute holding period in days
+    def _holding_days(t):
+        try:
+            buy = t["buy_date"]
+            sell = t["sell_date"]
+            if not (buy and sell):
+                return None
+            days = (datetime.strptime(sell, "%Y-%m-%d") - datetime.strptime(buy, "%Y-%m-%d")).days
+            return days if days >= 0 else None
+        except Exception:
+            return None
+
+    # Only count trades with pnl > 0 (exclude breakeven and losses)
+    # This is intentional: see test coverage and docstring
+    winner_days = [
+        d for t in trade_pnl if t["pnl"] > 0
+        for d in [_holding_days(t)] if d is not None
+    ]
+    avg_holding_days_winners = round(float(statistics.mean(winner_days)), 2) if winner_days else None
+
+    # Mean days held for trades that closed at a loss (pnl < 0, excluding breakeven)
+    loser_days = [
+        d for t in trade_pnl if t["pnl"] < 0
+        for d in [_holding_days(t)] if d is not None
+    ]
+    avg_holding_days_losers = round(float(statistics.mean(loser_days)), 2) if loser_days else None
+
     return {
         "trade_pnl": trade_pnl,
         "equity_curve": equity_curve,
         "total_pnl": round(cumulative_pnl, 4),
         "total_return_pct": total_return_pct,
+        "avg_holding_days_winners": avg_holding_days_winners,
+        "avg_holding_days_losers": avg_holding_days_losers,
+    }
+
+
+
+# Minimum winners and losers required before flagging the disposition effect
+MIN_TRADES_FOR_DISPOSITION_CHECK = 5
+# Losers must be held at least 50% longer than winners to trigger the warning
+DISPOSITION_EFFECT_THRESHOLD = 1.5
+
+def check_disposition_effect(pnl_data: dict) -> dict | None:
+    """Return a warning dict if losing trades are held significantly longer than winners.
+
+    Requires at least MIN_TRADES_FOR_DISPOSITION_CHECK winners and losers to avoid noise from tiny samples.
+    Returns None when there is insufficient data or no meaningful difference.
+    """
+    avg_winner_days = pnl_data.get("avg_holding_days_winners")
+    avg_loser_days = pnl_data.get("avg_holding_days_losers")
+
+    if avg_winner_days is None or avg_loser_days is None or avg_winner_days <= 0:
+        return None
+
+    trade_pnl = pnl_data.get("trade_pnl", [])
+    num_winners = sum(1 for t in trade_pnl if t.get("pnl", 0) > 0)
+    num_losers = sum(1 for t in trade_pnl if t.get("pnl", 0) < 0)
+
+    if num_winners < MIN_TRADES_FOR_DISPOSITION_CHECK or num_losers < MIN_TRADES_FOR_DISPOSITION_CHECK:
+        return None
+
+    # Guard against division by zero
+    if avg_winner_days == 0:
+        return None
+
+    if avg_loser_days / avg_winner_days < DISPOSITION_EFFECT_THRESHOLD:
+        return None
+
+    return {
+        "type": "disposition_effect",
+        "level": "warning",
+        "message": (
+            f"You held losing trades an average of {avg_loser_days} days, "
+            f"but winning trades only {avg_winner_days} days. "
+            "Holding losers much longer than winners is called the 'disposition effect' — "
+            "a common bias where traders wait and hope a loss will turn around. "
+            "Consider using stop-losses to cut losing trades earlier."
+        ),
+    }
+
+
+
+# Costs must eat this fraction of gross profit before the overtrading flag fires
+OVERTRADING_COST_DRAG_THRESHOLD = 0.20
+# More than one round-trip per trading day is considered high frequency
+OVERTRADING_FREQUENCY_THRESHOLD = 252
+# Minimum trades required for frequency/cost drag to be meaningful
+MIN_TRADES_FOR_FREQUENCY_SIGNAL = 20
+
+
+def check_overtrading(
+    pnl_data: dict,
+    commissions: dict,
+    slippage: dict,
+    bid_ask_spread: dict,
+) -> dict | None:
+    """Return a warning dict if trading costs materially drag on returns.
+
+    Only fires when there are enough closed trades, gross profit is positive,
+    and total costs exceed OVERTRADING_COST_DRAG_THRESHOLD of that profit.
+    """
+    trade_pnl = pnl_data.get("trade_pnl", [])
+    num_closed = len(trade_pnl)
+
+    # Input guards: all cost dicts must be present and numeric
+    def _safe_cost(d, key):
+        try:
+            return float(d.get(key, 0.0))
+        except Exception:
+            return 0.0
+
+    if not isinstance(commissions, dict) or not isinstance(slippage, dict) or not isinstance(bid_ask_spread, dict):
+        return None
+
+    if num_closed < MIN_TRADES_FOR_FREQUENCY_SIGNAL:
+        return None
+
+    gross_pnl = pnl_data.get("total_pnl", 0.0)
+    if not isinstance(gross_pnl, (int, float)) or gross_pnl <= 0:
+        return None
+
+    total_costs = (
+        _safe_cost(commissions, "total_commission_usd")
+        + _safe_cost(slippage, "total_slippage_usd")
+        + _safe_cost(bid_ask_spread, "total_spread_usd")
+    )
+
+    cost_drag_pct = total_costs / gross_pnl if gross_pnl else 0.0
+    if cost_drag_pct < OVERTRADING_COST_DRAG_THRESHOLD:
+        return None
+
+    # Annualise trade count using trading days (252/year)
+    trades_per_year = None
+    try:
+        buy_dates = [t["buy_date"] for t in trade_pnl if t.get("buy_date")]
+        sell_dates = [t["sell_date"] for t in trade_pnl if t.get("sell_date")]
+        if buy_dates and sell_dates:
+            first_date = min(buy_dates)
+            last_date = max(sell_dates)
+            total_days = (
+                datetime.strptime(last_date, "%Y-%m-%d")
+                - datetime.strptime(first_date, "%Y-%m-%d")
+            ).days
+            if total_days > 0:
+                # Use 252 trading days per year
+                trades_per_year = round(num_closed * 252 / total_days, 1)
+    except Exception:
+        pass
+
+    drag_pct_display = round(cost_drag_pct * 100, 1)
+    freq_part = (
+        f" at a rate of {trades_per_year:.0f} trades/year"
+        if trades_per_year is not None
+        else ""
+    )
+
+    return {
+        "type": "overtrading",
+        "level": "warning",
+        "message": (
+            f"Costs (commissions + slippage + spread) total ${total_costs:.2f}, "
+            f"which is {drag_pct_display}% of gross profit. "
+            f"You made {num_closed} closed trades{freq_part}. "
+            "High trade frequency may be causing costs to materially drag on returns. "
+            "Consider reducing trade frequency or reviewing position sizing."
+        ),
+        "cost_drag_pct": round(cost_drag_pct, 4),
+        "total_costs_usd": round(total_costs, 2),
+        "num_closed_trades": num_closed,
+        "trades_per_year": trades_per_year,
+    }
+
+
+# Fraction of total trades in one symbol that triggers the concentration risk warning
+CONCENTRATION_RISK_THRESHOLD = 0.50
+# Minimum trades before the check is meaningful
+MIN_TRADES_FOR_CONCENTRATION_CHECK = 2
+
+
+def check_concentration_risk(trades: list[dict]) -> dict | None:
+    """Return a warning dict if more than 50% of trades are in a single symbol.
+
+    Concentration is measured by trade count, not position size or capital deployed.
+    Trades with a missing or empty symbol field are skipped and logged.
+    Returns None when there are too few trades or no symbol exceeds the threshold.
+    """
+    if len(trades) < MIN_TRADES_FOR_CONCENTRATION_CHECK:
+        return None
+
+    symbol_counts: dict[str, int] = {}
+    for trade in trades:
+        symbol = str(trade.get("symbol") or "").strip().upper()
+        if not symbol:
+            logger.warning("check_concentration_risk: trade skipped due to missing symbol: %r", trade)
+            continue
+        symbol_counts[symbol] = symbol_counts.get(symbol, 0) + 1
+
+    total = sum(symbol_counts.values())
+    if total == 0:
+        return None
+
+    most_traded = max(symbol_counts, key=lambda s: symbol_counts[s])
+    pct = symbol_counts[most_traded] / total
+
+    if pct <= CONCENTRATION_RISK_THRESHOLD:
+        return None
+
+    pct_display = round(pct * 100, 1)
+    return {
+        "type": "concentration_risk",
+        "level": "warning",
+        "message": (
+            f"{pct_display}% of your trades are in {most_traded} "
+            f"({symbol_counts[most_traded]} of {total}). "
+            "Having more than half your trades in a single symbol increases exposure to that asset. "
+            "Consider diversifying across more symbols to reduce concentration risk."
+        ),
+        "symbol": most_traded,
+        "trade_count": symbol_counts[most_traded],
+        "total_trades": total,
+        "concentration_pct": round(pct, 4),
     }
 
 
@@ -523,7 +751,12 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
             sufficiency_warning = check_trade_count_sufficiency(summary.get("num_trades", 0))
             if sufficiency_warning:
                 warnings.append(sufficiency_warning)
-            return {"format": fmt, "summary": summary, "warnings": warnings}
+            return {
+                "format": fmt,
+                "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
+                "summary": summary,
+                "warnings": warnings,
+            }
 
         trades = parse_detailed(clean) or []
         all_issues = validate_trades(trades) or []
@@ -541,8 +774,19 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
         bid_ask_spread = calculate_bid_ask_spread(trades, spread_pct=spread_pct) if trades else {}
         pnl_values = [t["pnl"] for t in pnl.get("trade_pnl", [])]
         significance = run_significance_tests(pnl_values) if pnl_values else None
+        # Only call disposition effect check once, after all other warnings
+        disposition_warning = check_disposition_effect(pnl)
+        if disposition_warning:
+            warnings.append(disposition_warning)
+        overtrading_warning = check_overtrading(pnl, commissions, slippage, bid_ask_spread)
+        if overtrading_warning:
+            warnings.append(overtrading_warning)
+        concentration_warning = check_concentration_risk(trades)
+        if concentration_warning:
+            warnings.append(concentration_warning)
         result = {
             "format": fmt,
+            "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
             "trades": trades,
             "warnings": warnings,
             "notices": notices,
@@ -574,6 +818,7 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
                     })
                 result = {
                     "format": fmt,
+                    "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
                     "summary": summary,
                     "trades": [],
                     "warnings": summary_warnings,
@@ -603,10 +848,18 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
                         "to draw reliable conclusions."
                     ),
                 })
+            # Only call disposition effect check once, after all other warnings
+            disposition_warning = check_disposition_effect(pnl)
+            if disposition_warning:
+                warnings.append(disposition_warning)
+            concentration_warning = check_concentration_risk(trades)
+            if concentration_warning:
+                warnings.append(concentration_warning)
             pnl_values = [t["pnl"] for t in pnl.get("trade_pnl", [])]
             significance = run_significance_tests(pnl_values)
             result = {
                 "format": fmt,
+                "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
                 "trades": trades,
                 "warnings": warnings,
                 "notices": notices,

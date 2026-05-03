@@ -79,6 +79,61 @@ _TIERS = [
     ( 0, "MINIMAL   – no significant overfitting signal"),
 ]
 
+# Plain-English descriptions for each config key.
+# Keyed to match config_used exactly so config_descriptions stays in sync automatically.
+_CONFIG_DESCRIPTIONS: dict[str, str] = {
+    "r2_low": (
+        "Equity curve smoothness lower bound. "
+        "An R² below this value means the curve is too erratic to look like a real strategy."
+    ),
+    "r2_high": (
+        "Equity curve smoothness upper bound. "
+        "A curve smoother than this is suspiciously perfect — "
+        "real markets don't produce perfectly smooth equity lines."
+    ),
+    "win_rate_low": (
+        "Win rate lower plausibility bound. "
+        "Win rates below this are too low to suggest any edge."
+    ),
+    "win_rate_high": (
+        "Win rate upper plausibility bound. "
+        "Win rates above this are unusually high and may indicate the strategy "
+        "was over-fitted to historical data."
+    ),
+    "sharpe_low": (
+        "Sharpe ratio lower plausibility bound. "
+        "Strategies with a Sharpe below this offer poor risk-adjusted returns."
+    ),
+    "sharpe_high": (
+        "Sharpe ratio upper plausibility bound. "
+        "Real strategies rarely sustain a Sharpe above this — higher values "
+        "are a strong signal of curve-fitting."
+    ),
+    "gini_low": (
+        "Trade clustering lower bound (Gini coefficient). "
+        "A very low value means trades are evenly spread across time — "
+        "which can indicate the strategy never sat out bad periods."
+    ),
+    "gini_high": (
+        "Trade clustering upper bound (Gini coefficient). "
+        "A very high value means almost all trades cluster in a tiny window — "
+        "which can mean the strategy was only profitable in one lucky period."
+    ),
+    "trades_per_year": (
+        "Assumed trading days per year used to annualise the Sharpe ratio. "
+        "Set to None to skip annualisation and use the raw per-trade Sharpe directly."
+    ),
+    "alpha": (
+        "Statistical significance level. "
+        "A result is flagged as significant only when the chance of seeing it by luck "
+        "is below this threshold."
+    ),
+    "clustering_buckets": (
+        "Number of time buckets used to measure how evenly trades are spread across the "
+        "backtest period. More buckets give a finer-grained picture of clustering."
+    ),
+}
+
 
 # ---------------------------------------------------------------------------
 # Configuration dataclass
@@ -794,6 +849,14 @@ def detect_overfitting(
                 "trades_per_year":  cfg.trades_per_year,
                 "alpha":            cfg.alpha,
                 "clustering_buckets": cfg.clustering_buckets,
+            },
+            "config_descriptions": {
+                k: _CONFIG_DESCRIPTIONS.get(k, "")
+                for k in (
+                    "r2_low", "r2_high", "win_rate_low", "win_rate_high",
+                    "sharpe_low", "sharpe_high", "gini_low", "gini_high",
+                    "trades_per_year", "alpha", "clustering_buckets",
+                )
             },
         },
     }

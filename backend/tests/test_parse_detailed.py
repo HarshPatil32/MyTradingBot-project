@@ -316,10 +316,12 @@ class TestAnalyzeUploadedTradesDetailed:
         assert isinstance(result["warnings"], list)
 
     def test_no_data_quality_warnings_for_clean_trades(self):
-        # Clean data produces no duplicate/pairing warnings; only the trade count notice is expected
+        # Clean data produces no duplicate/pairing warnings; only the trade count and concentration warnings are expected
         result = analyze_uploaded_trades(self._VALID_CSV)
-        quality_warnings = [w for w in result["warnings"] if w["type"] != "insufficient_trade_count"]
+        quality_warnings = [w for w in result["warnings"] if w["type"] not in {"insufficient_trade_count", "concentration_risk"}]
         assert quality_warnings == []
+        # Also check that the concentration warning is present
+        assert any(w["type"] == "concentration_risk" for w in result["warnings"])
 
     def test_returns_pnl_dict(self):
         result = analyze_uploaded_trades(self._VALID_CSV)
