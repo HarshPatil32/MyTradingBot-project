@@ -6,7 +6,16 @@ import pytest
 from datetime import datetime
 from unittest.mock import patch
 
+import benchmark as benchmark_module
 from benchmark import fetch_benchmark
+
+
+@pytest.fixture(autouse=True)
+def clear_benchmark_cache():
+    """Reset the module-level cache before every test so tests are isolated."""
+    benchmark_module._cache.clear()
+    yield
+    benchmark_module._cache.clear()
 
 _MOCK_YF = "benchmark.yf.download"
 
@@ -33,7 +42,11 @@ class TestFetchBenchmark:
         mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", 400.0, 480.0)
         result = fetch_benchmark(_sample_trades(), ticker)
         assert result is not None
-        assert set(result.keys()) == {"start_date", "end_date", "start_price", "end_price", "total_return_pct"}
+        assert set(result.keys()) == {
+            "start_date", "end_date",
+            "actual_start_date", "actual_end_date",
+            "start_price", "end_price", "total_return_pct",
+        }
 
     @pytest.mark.parametrize("ticker", ["SPY", "QQQ"])
     @patch(_MOCK_YF)
@@ -92,13 +105,12 @@ class TestFetchBenchmark:
 
     @pytest.mark.parametrize("ticker", ["SPY", "QQQ"])
     @patch(_MOCK_YF)
-    def test_single_trade_still_returns_result(self, mock_dl, ticker):
+    def test_single_trading_day_returns_none(self, mock_dl, ticker):
+        # One row of data is below the minimum period threshold
         mock_dl.return_value = _make_df("2023-06-01", "2023-06-01", 440.0, 440.0)
         trades = [{"date": "2023-06-01", "symbol": "AAPL", "action": "BUY", "price": 180.0, "shares": 5}]
         result = fetch_benchmark(trades, ticker)
-        assert result is not None
-        assert result["start_date"] == "2023-06-01"
-        assert result["end_date"] == "2023-06-01"
+        assert result is None
 
     @pytest.mark.parametrize("ticker", ["SPY", "QQQ"])
     @patch(_MOCK_YF)
@@ -144,3 +156,38 @@ class TestFetchBenchmark:
         mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", 400.0, 480.0)
         fetch_benchmark(_sample_trades(), ticker)
         assert mock_dl.call_args.args[0] == ticker
+
+    @pytest.mark.parametrize("ticker", ["SPY", "QQQ"])
+    @patch(_MOCK_YF)
+    def test_actual_dates_reflect_yfinance_data(self, mock_dl, ticker):
+        # Data starts/ends on different days than the trade dates (e.g. holiday alignment)
+        mock_dl.return_value = _make_df("2023-01-04", "2023-12-14", 400.0, 480.0)
+        result = fetch_benchmark(_sample_trades(), ticker)
+        assert result is not None
+        assert result["start_date"] == "2023-01-03"   # original trade date
+        assert result["end_date"] == "2023-12-15"     # original trade date
+        assert result["actual_start_date"] == "2023-01-04"  # real trading day used
+        assert result["actual_end_date"] == "2023-12-14"    # real trading day used
+
+    @pytest.mark.parametrize("ticker", ["SPY", "QQQ"])
+    @patch(_MOCK_YF)
+    def test_result_is_cached_on_second_call(self, mock_dl, ticker):
+        mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", 400.0, 480.0)
+        trades = _sample_trades()
+        first = fetch_benchmark(trades, ticker)
+        second = fetch_benchmark(trades, ticker)
+        assert first == second
+        assert mock_dl.call_count == 1  # yfinance called only once
+
+    @pytest.mark.parametrize("ticker", ["SPY", "QQQ"])
+    @patch(_MOCK_YF)
+    def test_negative_return_is_computed_correctly(self, mock_dl, ticker):
+        start_price, end_price = 480.0, 400.0
+        mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", start_price, end_price)
+        result = fetch_benchmark(_sample_trades(), ticker)
+        assert result is not None
+        assert result["total_return_pct"] < 0
+        dates = pd.bdate_range(start="2023-01-03", end="2023-12-15")
+        prices = np.linspace(start_price, end_price, len(dates))
+        expected = round((prices[-1] - prices[0]) / prices[0] * 100, 4)
+        assert result["total_return_pct"] == expected

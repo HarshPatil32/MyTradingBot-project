@@ -18,7 +18,58 @@ function FormatBadge({ format }) {
   )
 }
 
-function DetailedResults({ trades, warnings, notices, pnl }) {
+function BenchmarkComparison({ spyBenchmark, qqqBenchmark, strategyReturnPct }) {
+  if (!spyBenchmark && !qqqBenchmark) return null
+
+  const benchmarks = [
+    spyBenchmark && { label: 'SPY (buy & hold)', ...spyBenchmark },
+    qqqBenchmark && { label: 'QQQ (buy & hold)', ...qqqBenchmark },
+  ].filter(Boolean)
+
+  const colCount = 1 + benchmarks.length
+  const gridClass = `grid grid-cols-${colCount} gap-2 text-center`
+
+  function formatReturn(val) {
+    if (val == null) return 'N/A'
+    return `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`
+  }
+
+  function returnColor(val) {
+    if (val == null) return 'text-gray-500'
+    return val >= 0 ? 'text-green-600' : 'text-red-600'
+  }
+
+  const ref = spyBenchmark ?? qqqBenchmark
+  const startLabel = ref?.start_date ?? 'N/A'
+  const endLabel = ref?.end_date ?? 'N/A'
+
+  return (
+    <div className="bg-gray-50 rounded p-3">
+      <p className="text-xs text-gray-500 mb-2">Benchmark Comparison</p>
+      <div className={`${gridClass} text-sm mb-1`}>
+        <span className="text-xs text-gray-400">Strategy</span>
+        {benchmarks.map((b) => (
+          <span key={b.label} className="text-xs text-gray-400">{b.label}</span>
+        ))}
+      </div>
+      <div className={gridClass}>
+        <span className={`font-bold ${returnColor(strategyReturnPct)}`}>
+          {formatReturn(strategyReturnPct)}
+        </span>
+        {benchmarks.map((b) => (
+          <span key={b.label} className={`font-bold ${returnColor(b.total_return_pct)}`}>
+            {formatReturn(b.total_return_pct)}
+          </span>
+        ))}
+      </div>
+      <p className="text-xs text-gray-400 mt-2">
+        Period: {startLabel} → {endLabel}
+      </p>
+    </div>
+  )
+}
+
+function DetailedResults({ trades, warnings, notices, pnl, spyBenchmark, qqqBenchmark }) {
   const safeWarnings = warnings ?? []
   const safeNotices = notices ?? []
   return (
@@ -59,6 +110,12 @@ function DetailedResults({ trades, warnings, notices, pnl }) {
           </p>
         </div>
       </div>
+
+      <BenchmarkComparison
+        spyBenchmark={spyBenchmark}
+        qqqBenchmark={qqqBenchmark}
+        strategyReturnPct={pnl.total_return_pct ?? 0}
+      />
 
       <div>
         <p className="text-sm font-medium text-gray-700 mb-2">
@@ -269,6 +326,8 @@ export default function BacktestUpload() {
                 warnings={result.warnings}
                 notices={result.notices}
                 pnl={result.pnl}
+                spyBenchmark={result.spy_benchmark}
+                qqqBenchmark={result.qqq_benchmark}
               />
             ) : (
               <SummaryResults summary={result.summary} />
