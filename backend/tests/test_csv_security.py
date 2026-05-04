@@ -236,6 +236,15 @@ class TestAnalyzeBacktestRoute:
         resp = client.post("/analyze-trades", content_type="multipart/form-data", data=data)
         assert resp.status_code != 413
 
+    def test_upload_one_byte_below_limit_not_rejected(self, client):
+        # Multipart framing adds ~200 bytes of overhead (boundary, headers, etc.) on
+        # top of the file bytes, so we leave 1 KB of headroom to stay under the total
+        # request ceiling while still exercising the near-limit boundary.
+        just_under = b"x" * (_MAX_UPLOAD_BYTES - 1024)
+        data = {"file": (io.BytesIO(just_under), "boundary.csv")}
+        resp = client.post("/analyze-trades", content_type="multipart/form-data", data=data)
+        assert resp.status_code != 413
+
     def test_oversized_upload_no_content_length_returns_413(self, client):
         # Without Content-Length the framework limit is bypassed; multipart parsing
         # still rejects the request (400) before the manual read check can fire. Both

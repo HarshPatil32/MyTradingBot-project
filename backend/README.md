@@ -14,9 +14,11 @@ This backend is designed to be deployed on Render.com.
 ## API Endpoints
 
 - `GET /` - Health check
+- `GET /config` - Server configuration (e.g. `max_upload_bytes`)
 - `POST /webhookcallback` - Webhook callback  
 - `GET /MACD-strategy` - MACD trading strategy backtest with optimization
 - `GET /spy-investment` - SPY investment comparison
+- `POST /analyze-trades` - Upload a CSV trade log or summary report (max 5 MB)
 
 ### MACD Strategy Parameters:
 - `stocks` - Comma-separated stock symbols (e.g., "AAPL,MSFT")

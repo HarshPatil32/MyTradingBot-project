@@ -91,6 +91,7 @@ CSP_POLICY = "default-src 'none'; frame-ancestors 'none'; base-uri 'self'"
 
 _MB = 1024 * 1024
 # Max upload size for all file uploads (5 MB). Applies to every route via MAX_CONTENT_LENGTH.
+# Keep in sync with MAX_FILE_BYTES in frontend/src/screens/BacktestUpload.jsx
 _MAX_UPLOAD_BYTES = 5 * _MB
 
 # Try to import trading modules with error handling
@@ -160,6 +161,14 @@ def heartbeat():
         "status": "alive", 
         "timestamp": datetime.now().isoformat(),
         "message": "Server is running"
+    }), 200
+
+
+@app.route("/config", methods=["GET"])
+def config():
+    """Expose server-side limits so clients can stay in sync without hardcoding."""
+    return jsonify({
+        "max_upload_bytes": _MAX_UPLOAD_BYTES,
     }), 200
 
 

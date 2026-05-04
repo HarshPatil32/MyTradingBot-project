@@ -1,9 +1,11 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import axios from 'axios'
 import { UploadCloud, AlertCircle, CheckCircle, FileText } from 'lucide-react'
 import { API_URL } from '../config'
 
-const MAX_FILE_BYTES = 5 * 1024 * 1024
+// Fallback used only if the /config endpoint is unreachable.
+// The authoritative value comes from the backend at runtime.
+const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024
 
 function FormatBadge({ format }) {
   const isDetailed = format === 'detailed'
@@ -197,7 +199,20 @@ export default function BacktestUpload() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [maxFileBytes, setMaxFileBytes] = useState(DEFAULT_MAX_FILE_BYTES)
   const inputRef = useRef(null)
+
+  useEffect(() => {
+    axios.get(`${API_URL}/config`)
+      .then(({ data }) => {
+        if (typeof data.max_upload_bytes === 'number') {
+          setMaxFileBytes(data.max_upload_bytes)
+        }
+      })
+      .catch(() => {
+        // Backend unreachable — fallback constant stays active
+      })
+  }, [])
 
   function handleFileChange(e) {
     const selected = e.target.files[0]
@@ -216,8 +231,10 @@ export default function BacktestUpload() {
       return
     }
 
-    if (selected.size > MAX_FILE_BYTES) {
-      setError('File exceeds the 5 MB limit.')
+    // Note: this is a UX-only guard — the backend enforces the real limit
+    if (typeof selected.size !== 'number' || selected.size > maxFileBytes) {
+      const limitMb = Math.round(maxFileBytes / (1024 * 1024))
+      setError(`File exceeds the ${limitMb} MB limit.`)
       setFile(null)
       return
     }
@@ -269,7 +286,7 @@ export default function BacktestUpload() {
           <span className="text-sm text-gray-600">
             {file ? file.name : 'Click to select a CSV file'}
           </span>
-          <span className="text-xs text-gray-400 mt-1">Max 5 MB</span>
+          <span className="text-xs text-gray-400 mt-1">Max {Math.round(maxFileBytes / (1024 * 1024))} MB</span>
           <input
             ref={inputRef}
             type="file"
