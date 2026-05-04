@@ -3,10 +3,11 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
 import json
 import numpy as np
+import threading
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from csv_analyzer import analyze_uploaded_trades, FreeTierLimitExceeded
@@ -91,7 +92,44 @@ CSP_POLICY = "default-src 'none'; frame-ancestors 'none'; base-uri 'self'"
 
 _MB = 1024 * 1024
 # Max upload size for all file uploads (5 MB). Applies to every route via MAX_CONTENT_LENGTH.
+# Keep in sync with MAX_FILE_BYTES in frontend/src/screens/BacktestUpload.jsx
 _MAX_UPLOAD_BYTES = 5 * _MB
+
+# Free tier: max analyses per IP per calendar month (UTC)
+MONTHLY_ANALYSIS_LIMIT = 5
+
+# In-memory store: maps (ip, "YYYY-MM") -> request count.
+# Counts reset when the server restarts — users could exceed the monthly cap
+# across restarts. Acceptable for the free tier; replace with persistent
+# storage (e.g. Redis) if stricter enforcement is needed.
+_rate_limit_store: dict[tuple[str, str], int] = {}
+_rate_limit_lock = threading.Lock()
+
+
+def _get_client_ip() -> str:
+    """Return the real client IP, honouring X-Forwarded-For set by Render's proxy."""
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if forwarded_for:
+        # Use the rightmost entry — added by our trusted proxy, not the client.
+        # The leftmost entries can be spoofed by the client.
+        return forwarded_for.split(",")[-1].strip()
+    return request.remote_addr or "unknown"
+
+
+def _get_month_key() -> str:
+    """Return the current UTC month as 'YYYY-MM'. Extracted so tests can patch it."""
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def _check_rate_limit(ip: str) -> bool:
+    """Return True if the IP is within the monthly limit, False if exceeded."""
+    key = (ip, _get_month_key())
+    with _rate_limit_lock:
+        count = _rate_limit_store.get(key, 0)
+        if count >= MONTHLY_ANALYSIS_LIMIT:
+            return False
+        _rate_limit_store[key] = count + 1
+    return True
 
 # Try to import trading modules with error handling
 
@@ -160,6 +198,14 @@ def heartbeat():
         "status": "alive", 
         "timestamp": datetime.now().isoformat(),
         "message": "Server is running"
+    }), 200
+
+
+@app.route("/config", methods=["GET"])
+def config():
+    """Expose server-side limits so clients can stay in sync without hardcoding."""
+    return jsonify({
+        "max_upload_bytes": _MAX_UPLOAD_BYTES,
     }), 200
 
 
@@ -545,13 +591,20 @@ def _safe_filename(raw: str) -> str:
 def analyze_trades():
     """Accept a CSV upload and return sanitized trade analysis."""
 
+    ip = _get_client_ip()
+    if not _check_rate_limit(ip):
+        logger.warning("Rate limit exceeded for IP: %s", ip)
+        return jsonify({
+            "error": f"Free tier limit reached. You may run up to {MONTHLY_ANALYSIS_LIMIT} analyses per month. Resets on the 1st of next month."
+        }), 429
+
     try:
         if 'file' in request.files:
             upload = request.files['file']
             try:
                 _safe_filename(upload.filename or "")
             except ValueError:
-                return jsonify({"error": "Invalid filename."}), 400
+                return jsonify({"error": "The filename is invalid. Please rename your file and try again."}), 400
             raw_bytes = upload.read()
             try:
                 csv_data = raw_bytes.decode("utf-8")
@@ -565,7 +618,11 @@ def analyze_trades():
                 return jsonify({"error": "csv_data must be a string."}), 400
             commission_per_trade = body.get("commission_per_trade", None)
         else:
-            return jsonify({"error": "Send a multipart file upload or JSON body with csv_data."}), 400
+            return jsonify({"error": "No file received. Please upload a CSV file or send csv_data in the request body."}), 400
+
+        # Reject empty uploads before any parsing
+        if not csv_data or not csv_data.strip():
+            return jsonify({"error": "The uploaded file is empty. Please upload a valid CSV file."}), 400
 
         # Validate commission_per_trade if provided
         if commission_per_trade is not None:
@@ -594,7 +651,7 @@ def analyze_trades():
         raise
     except Exception as exc:
         logger.error("analyze_backtest error: %s", exc)
-        return jsonify({"error": "Failed to process CSV."}), 500
+        return jsonify({"error": "An unexpected error occurred while processing your file. Please try again."}), 500
 
 
 if __name__ == "__main__":

@@ -35,19 +35,19 @@ class TestAssertContentSafe:
             _assert_content_safe("#!/bin/bash\nrm -rf /")
 
     def test_formula_equals_raises(self):
-        with pytest.raises(ValueError, match="unsafe cell"):
+        with pytest.raises(ValueError, match="cannot be processed safely"):
             _assert_content_safe("date,symbol\n2024-01-01,=CMD|'/C calc'!A0")
 
     def test_formula_plus_raises(self):
-        with pytest.raises(ValueError, match="unsafe cell"):
+        with pytest.raises(ValueError, match="cannot be processed safely"):
             _assert_content_safe("date,symbol\n2024-01-01,+cmd|' /C calc")
 
     def test_formula_at_raises(self):
-        with pytest.raises(ValueError, match="unsafe cell"):
+        with pytest.raises(ValueError, match="cannot be processed safely"):
             _assert_content_safe("date,symbol\n2024-01-01,@SUM(1+1)*cmd")
 
     def test_formula_minus_non_numeric_raises(self):
-        with pytest.raises(ValueError, match="unsafe cell"):
+        with pytest.raises(ValueError, match="cannot be processed safely"):
             _assert_content_safe("date,symbol\n2024-01-01,-cmd|payload")
 
     def test_minus_numeric_price_passes(self):
@@ -201,6 +201,18 @@ class TestAnalyzeBacktestRoute:
         resp = client.post("/analyze-trades", content_type="multipart/form-data", data=data)
         assert resp.status_code == 400
 
+    def test_empty_file_body_returns_400(self, client):
+        data = {"file": (io.BytesIO(b""), "empty.csv")}
+        resp = client.post("/analyze-trades", content_type="multipart/form-data", data=data)
+        assert resp.status_code == 400
+        assert "empty" in resp.get_json()["error"].lower()
+
+    def test_whitespace_only_file_returns_400(self, client):
+        data = {"file": (io.BytesIO(b"   \n  "), "blank.csv")}
+        resp = client.post("/analyze-trades", content_type="multipart/form-data", data=data)
+        assert resp.status_code == 400
+        assert "empty" in resp.get_json()["error"].lower()
+
     def test_wrong_content_type_returns_400(self, client):
         resp = client.post("/analyze-trades", data="plain text", content_type="text/plain")
         assert resp.status_code == 400
@@ -221,6 +233,15 @@ class TestAnalyzeBacktestRoute:
         # Note: multipart framing adds overhead, so exactly _MAX_UPLOAD_BYTES of file
         # data would still push the total request over the limit. Use a small payload.
         data = {"file": (io.BytesIO(b"date,symbol\n2024-01-01,AAPL\n"), "small.csv")}
+        resp = client.post("/analyze-trades", content_type="multipart/form-data", data=data)
+        assert resp.status_code != 413
+
+    def test_upload_one_byte_below_limit_not_rejected(self, client):
+        # Multipart framing adds ~200 bytes of overhead (boundary, headers, etc.) on
+        # top of the file bytes, so we leave 1 KB of headroom to stay under the total
+        # request ceiling while still exercising the near-limit boundary.
+        just_under = b"x" * (_MAX_UPLOAD_BYTES - 1024)
+        data = {"file": (io.BytesIO(just_under), "boundary.csv")}
         resp = client.post("/analyze-trades", content_type="multipart/form-data", data=data)
         assert resp.status_code != 413
 

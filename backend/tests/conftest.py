@@ -5,7 +5,7 @@ import pytest
 if os.environ.get("SKIP_FLASK_APP", "0") == "1":
     flask_app = None
 else:
-    from app import app as flask_app
+    from app import app as flask_app, _rate_limit_store, _rate_limit_lock
 
 # Set before any app import so validate_env_vars() is suppressed during tests
 os.environ.setdefault("TESTING", "1")
@@ -21,3 +21,16 @@ def client():
     flask_app.config['TESTING'] = True
     with flask_app.test_client() as client:
         yield client
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limit_store():
+    """Clear the in-memory rate limit store before each test to avoid cross-test pollution."""
+    if flask_app is None:
+        yield
+        return
+    with _rate_limit_lock:
+        _rate_limit_store.clear()
+    yield
+    with _rate_limit_lock:
+        _rate_limit_store.clear()

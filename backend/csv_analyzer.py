@@ -62,6 +62,8 @@ _BINARY_MAGIC: tuple[bytes, ...] = (
 
 # Characters that trigger formula execution in spreadsheet tools (CSV injection)
 _FORMULA_CHARS: frozenset[str] = frozenset({"=", "+", "@"})
+# First characters that mark a cell as unsafe (formula chars + negative sign)
+_UNSAFE_FIRST_CHARS: frozenset[str] = _FORMULA_CHARS | frozenset({"-"})
 
 # Valid ticker: uppercase letters, digits, dots, hyphens; 1-20 chars total
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]([A-Z0-9.\-]{0,19})?$")
@@ -147,8 +149,12 @@ def _assert_content_safe(csv_data: str) -> None:
             stripped = cell.strip()
             if not stripped or _is_numeric_cell(stripped):
                 continue
-            if stripped[0] in _FORMULA_CHARS | {"-"}:
-                raise ValueError("CSV contains a potentially unsafe cell value")
+            if stripped[0] in _UNSAFE_FIRST_CHARS:
+                raise ValueError(
+                    "Your file contains a cell that cannot be processed safely "
+                    "(e.g. a value starting with =, +, @, or -). "
+                    "Please export a plain CSV from your trading platform."
+                )
 
 
 def _convert_semicolon_to_comma(csv_data: str) -> str:
@@ -218,10 +224,14 @@ def detect_format(csv_data: str) -> str:
 
     missing_detailed = REQUIRED_DETAILED_COLUMNS - actual_cols
     missing_summary = REQUIRED_SUMMARY_KEYS - actual_cols
+    if len(missing_detailed) <= len(missing_summary):
+        raise ValueError(
+            f"Your CSV looks like a trade-by-trade upload but is missing these columns: {sorted(missing_detailed)}. "
+            "Please check your file headers."
+        )
     raise ValueError(
-        f"CSV columns do not match any known format. "
-        f"For detailed format, missing: {sorted(missing_detailed)}. "
-        f"For summary format, missing: {sorted(missing_summary)}."
+        f"Your CSV looks like a summary upload but is missing these columns: {sorted(missing_summary)}. "
+        "Please check your file headers."
     )
 
 
@@ -239,7 +249,7 @@ def parse_detailed(csv_data: str, is_free_tier: bool = True) -> list[dict]:
 
     missing = REQUIRED_DETAILED_COLUMNS - norm_to_original.keys()
     if missing:
-        raise ValueError(f"CSV missing required columns: {sorted(missing)}")
+        raise ValueError(f"Your CSV is missing required columns: {sorted(missing)}. Please check your file headers.")
 
     # Access each required column by its original (un-normalized) fieldname
     col = {norm: norm_to_original[norm] for norm in REQUIRED_DETAILED_COLUMNS}
@@ -313,7 +323,7 @@ def parse_summary(csv_data: str) -> dict:
     missing = REQUIRED_SUMMARY_KEYS - actual_cols
     extra = actual_cols - REQUIRED_SUMMARY_KEYS
     if missing:
-        raise ValueError(f"CSV missing required fields: {sorted(missing)}. Did you typo a column?")
+        raise ValueError(f"Your CSV is missing required fields: {sorted(missing)}. Please check your column names.")
 
     # Map normalized required keys to original header
     col = {norm: norm_to_original[norm] for norm in REQUIRED_SUMMARY_KEYS}
@@ -393,13 +403,9 @@ def validate_trades(trades: list[dict]) -> list[dict]:
     # Detect duplicate rows: same date + symbol + action (normalized)
     seen: dict[tuple, int] = {}
     for trade in trades:
-        # Normalize action and symbol for all checks
         action = _normalize_action(trade.get("action"))
         symbol = str(trade.get("symbol") or "").strip().upper()
         date = str(trade.get("date") or "").strip()
-        # Overwrite the trade dict so downstream code always sees normalized values
-        trade["action"] = action
-        trade["symbol"] = symbol
         key = (date, symbol, action)
         seen[key] = seen.get(key, 0) + 1
 
@@ -581,10 +587,6 @@ def check_disposition_effect(pnl_data: dict) -> dict | None:
     if num_winners < MIN_TRADES_FOR_DISPOSITION_CHECK or num_losers < MIN_TRADES_FOR_DISPOSITION_CHECK:
         return None
 
-    # Guard against division by zero
-    if avg_winner_days == 0:
-        return None
-
     if avg_loser_days / avg_winner_days < DISPOSITION_EFFECT_THRESHOLD:
         return None
 
@@ -745,157 +747,89 @@ def check_concentration_risk(trades: list[dict]) -> dict | None:
 
 
 def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT_COMMISSION_PER_TRADE, slippage_pct: float = DEFAULT_SLIPPAGE_PCT, spread_pct: float = DEFAULT_SPREAD_PCT) -> dict:
-    """Main entry point: sanitize, detect format, parse, validate, and return a normalised trade dict for real trade history uploads."""
+    """Main entry point: sanitize, detect format, parse, validate, and return analysis results."""
     try:
         clean = sanitize_csv(csv_data)
         fmt = detect_format(clean)
-        warnings = []
-        if fmt == "summary":
-            summary = parse_summary(clean)
-            sufficiency_warning = check_trade_count_sufficiency(summary.get("num_trades", 0))
-            if sufficiency_warning:
-                warnings.append(sufficiency_warning)
-            return {
-                "format": fmt,
-                "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
-                "summary": summary,
-                "warnings": warnings,
-            }
-
-        trades = parse_detailed(clean) or []
-        all_issues = validate_trades(trades) or []
-        WARNING_LEVELS = {"warning", "error"}
-        INFO_LEVELS = {"info"}
-        warnings.extend(i for i in all_issues if i.get("level", "warning") in WARNING_LEVELS)
-        notices = [i for i in all_issues if i.get("level") in INFO_LEVELS]
-        pnl = calculate_pnl(trades) if trades else {}
-        num_closed = len(pnl.get("trade_pnl", []))
-        sufficiency_warning = check_trade_count_sufficiency(num_closed)
-        if sufficiency_warning:
-            warnings.append(sufficiency_warning)
-        commissions = calculate_commissions(trades, commission_per_trade=commission_per_trade) if trades else {}
-        slippage = calculate_slippage(trades, slippage_pct=slippage_pct) if trades else {}
-        bid_ask_spread = calculate_bid_ask_spread(trades, spread_pct=spread_pct) if trades else {}
-        pnl_values = [t["pnl"] for t in pnl.get("trade_pnl", [])]
-        significance = run_significance_tests(pnl_values) if pnl_values else None
-        # Only call disposition effect check once, after all other warnings
-        disposition_warning = check_disposition_effect(pnl)
-        if disposition_warning:
-            warnings.append(disposition_warning)
-        overtrading_warning = check_overtrading(pnl, commissions, slippage, bid_ask_spread)
-        if overtrading_warning:
-            warnings.append(overtrading_warning)
-        concentration_warning = check_concentration_risk(trades)
-        if concentration_warning:
-            warnings.append(concentration_warning)
-        try:
-            spy_benchmark = fetch_benchmark(trades, SPY_TICKER)
-        except Exception:
-            spy_benchmark = None
-        try:
-            qqq_benchmark = fetch_benchmark(trades, QQQ_TICKER)
-        except Exception:
-            qqq_benchmark = None
-        result = {
-            "format": fmt,
-            "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
-            "trades": trades,
-            "warnings": warnings,
-            "notices": notices,
-            "pnl": pnl,
-            "commissions": commissions,
-            "slippage": slippage,
-            "bid_ask_spread": bid_ask_spread,
-            "significance": significance,
-            "spy_benchmark": spy_benchmark,
-            "qqq_benchmark": qqq_benchmark,
+    except ValueError as e:
+        return {
+            "error": str(e),
+            "format": "detailed",
+            "trades": [],
+            "warnings": [],
+            "notices": [],
+            "pnl": {},
+            "significance": None,
         }
-        print("DEBUG: Returning from detailed (main try):", result)
-        return result
-    except Exception as e:
+
+    warnings = []
+    if fmt == "summary":
         try:
-            clean = sanitize_csv(csv_data)
-            fmt = detect_format(clean)
-
-            if fmt == "summary":
-                summary = parse_summary(clean)
-                summary_warnings = []
-                if summary.get("num_trades", 0) < MIN_CLOSED_TRADES_FOR_CONCLUSIONS:
-                    summary_warnings.append({
-                        "type": "insufficient_trade_count",
-                        "level": "warning",
-                        "message": (
-                            f"Only {summary['num_trades']} trade(s) found. "
-                            f"At least {MIN_CLOSED_TRADES_FOR_CONCLUSIONS} closed trades are needed "
-                            "to draw reliable conclusions."
-                        ),
-                    })
-                result = {
-                    "format": fmt,
-                    "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
-                    "summary": summary,
-                    "trades": [],
-                    "warnings": summary_warnings,
-                    "notices": [],
-                    "pnl": {},
-                }
-                print("DEBUG: Returning from summary:", result)
-                return result
-
-            trades = parse_detailed(clean)
-            if trades is None:
-                trades = []
-            all_issues = validate_trades(trades) or []
-            WARNING_LEVELS = {"warning", "error"}
-            INFO_LEVELS = {"info"}
-            warnings = [i for i in all_issues if i.get("level", "warning") in WARNING_LEVELS]
-            notices = [i for i in all_issues if i.get("level") in INFO_LEVELS]
-            pnl = calculate_pnl(trades) if trades else {}
-            num_closed = len(pnl.get("trade_pnl", []))
-            if num_closed < MIN_CLOSED_TRADES_FOR_CONCLUSIONS:
-                warnings.append({
-                    "type": "insufficient_trade_count",
-                    "level": "warning",
-                    "message": (
-                        f"Only {num_closed} closed trade(s) found. "
-                        f"At least {MIN_CLOSED_TRADES_FOR_CONCLUSIONS} closed trades are needed "
-                        "to draw reliable conclusions."
-                    ),
-                })
-            # Only call disposition effect check once, after all other warnings
-            disposition_warning = check_disposition_effect(pnl)
-            if disposition_warning:
-                warnings.append(disposition_warning)
-            concentration_warning = check_concentration_risk(trades)
-            if concentration_warning:
-                warnings.append(concentration_warning)
-            pnl_values = [t["pnl"] for t in pnl.get("trade_pnl", [])]
-            significance = run_significance_tests(pnl_values)
-            result = {
-                "format": fmt,
-                "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
-                "trades": trades,
-                "warnings": warnings,
-                "notices": notices,
-                "pnl": pnl,
-                "significance": significance,
-                "spy_benchmark": None,
-                "qqq_benchmark": None,
-            }
-            print("DEBUG: Returning from detailed:", result)
-            return result
-        except Exception as e:
-            import traceback
-            print("DEBUG: Exception in analyze_uploaded_trades:", e)
-            traceback.print_exc()
-            # Always return all expected keys, even on error
+            summary = parse_summary(clean)
+        except ValueError as e:
             return {
-                "error": f"Failed to parse file: {str(e)}",
-                "format": "detailed",  # fallback to detailed for test expectations
+                "error": str(e),
+                "format": fmt,
                 "trades": [],
                 "warnings": [],
                 "notices": [],
                 "pnl": {},
                 "significance": None,
-                # 'summary' key is omitted for detailed fallback
             }
+        sufficiency_warning = check_trade_count_sufficiency(summary.get("num_trades", 0))
+        if sufficiency_warning:
+            warnings.append(sufficiency_warning)
+        return {
+            "format": fmt,
+            "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
+            "summary": summary,
+            "warnings": warnings,
+        }
+
+    trades = parse_detailed(clean) or []
+    all_issues = validate_trades(trades) or []
+    WARNING_LEVELS = {"warning", "error"}
+    INFO_LEVELS = {"info"}
+    warnings.extend(i for i in all_issues if i.get("level", "warning") in WARNING_LEVELS)
+    notices = [i for i in all_issues if i.get("level") in INFO_LEVELS]
+    pnl = calculate_pnl(trades) if trades else {}
+    num_closed = len(pnl.get("trade_pnl", []))
+    sufficiency_warning = check_trade_count_sufficiency(num_closed)
+    if sufficiency_warning:
+        warnings.append(sufficiency_warning)
+    commissions = calculate_commissions(trades, commission_per_trade=commission_per_trade) if trades else {}
+    slippage = calculate_slippage(trades, slippage_pct=slippage_pct) if trades else {}
+    bid_ask_spread = calculate_bid_ask_spread(trades, spread_pct=spread_pct) if trades else {}
+    pnl_values = [t["pnl"] for t in pnl.get("trade_pnl", [])]
+    significance = run_significance_tests(pnl_values) if pnl_values else None
+    disposition_warning = check_disposition_effect(pnl)
+    if disposition_warning:
+        warnings.append(disposition_warning)
+    overtrading_warning = check_overtrading(pnl, commissions, slippage, bid_ask_spread)
+    if overtrading_warning:
+        warnings.append(overtrading_warning)
+    concentration_warning = check_concentration_risk(trades)
+    if concentration_warning:
+        warnings.append(concentration_warning)
+    try:
+        spy_benchmark = fetch_benchmark(trades, SPY_TICKER)
+    except Exception:
+        spy_benchmark = None
+    try:
+        qqq_benchmark = fetch_benchmark(trades, QQQ_TICKER)
+    except Exception:
+        qqq_benchmark = None
+    return {
+        "format": fmt,
+        "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
+        "trades": trades,
+        "warnings": warnings,
+        "notices": notices,
+        "pnl": pnl,
+        "commissions": commissions,
+        "slippage": slippage,
+        "bid_ask_spread": bid_ask_spread,
+        "significance": significance,
+        "spy_benchmark": spy_benchmark,
+        "qqq_benchmark": qqq_benchmark,
+    }

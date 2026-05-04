@@ -1,9 +1,11 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import axios from 'axios'
 import { UploadCloud, AlertCircle, CheckCircle, FileText } from 'lucide-react'
 import { API_URL } from '../config'
 
-const MAX_FILE_BYTES = 5 * 1024 * 1024
+// Fallback used only if the /config endpoint is unreachable.
+// The authoritative value comes from the backend at runtime.
+const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024
 
 function FormatBadge({ format }) {
   const isDetailed = format === 'detailed'
@@ -72,6 +74,8 @@ function BenchmarkComparison({ spyBenchmark, qqqBenchmark, strategyReturnPct }) 
 function DetailedResults({ trades, warnings, notices, pnl, spyBenchmark, qqqBenchmark }) {
   const safeWarnings = warnings ?? []
   const safeNotices = notices ?? []
+  const totalPnl = pnl?.total_pnl ?? 0
+  const totalReturnPct = pnl?.total_return_pct ?? 0
   return (
     <div className="space-y-4">
       {safeWarnings.length > 0 && (
@@ -99,14 +103,14 @@ function DetailedResults({ trades, warnings, notices, pnl, spyBenchmark, qqqBenc
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-gray-50 rounded p-3">
           <p className="text-xs text-gray-500">Total P&amp;L</p>
-          <p className={`text-xl font-bold ${pnl.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {pnl.total_pnl >= 0 ? '+' : ''}{pnl.total_pnl.toFixed(2)}
+          <p className={`text-xl font-bold ${totalPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)}
           </p>
         </div>
         <div className="bg-gray-50 rounded p-3">
           <p className="text-xs text-gray-500">Total Return</p>
-          <p className={`text-xl font-bold ${pnl.total_return_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {pnl.total_return_pct >= 0 ? '+' : ''}{pnl.total_return_pct.toFixed(2)}%
+          <p className={`text-xl font-bold ${totalReturnPct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {totalReturnPct >= 0 ? '+' : ''}{totalReturnPct.toFixed(2)}%
           </p>
         </div>
       </div>
@@ -114,7 +118,7 @@ function DetailedResults({ trades, warnings, notices, pnl, spyBenchmark, qqqBenc
       <BenchmarkComparison
         spyBenchmark={spyBenchmark}
         qqqBenchmark={qqqBenchmark}
-        strategyReturnPct={pnl.total_return_pct ?? 0}
+        strategyReturnPct={totalReturnPct}
       />
 
       <div>
@@ -195,7 +199,20 @@ export default function BacktestUpload() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [maxFileBytes, setMaxFileBytes] = useState(DEFAULT_MAX_FILE_BYTES)
   const inputRef = useRef(null)
+
+  useEffect(() => {
+    axios.get(`${API_URL}/config`)
+      .then(({ data }) => {
+        if (typeof data.max_upload_bytes === 'number') {
+          setMaxFileBytes(data.max_upload_bytes)
+        }
+      })
+      .catch(() => {
+        // Backend unreachable — fallback constant stays active
+      })
+  }, [])
 
   function handleFileChange(e) {
     const selected = e.target.files[0]
@@ -214,8 +231,10 @@ export default function BacktestUpload() {
       return
     }
 
-    if (selected.size > MAX_FILE_BYTES) {
-      setError('File exceeds the 5 MB limit.')
+    // Note: this is a UX-only guard — the backend enforces the real limit
+    if (typeof selected.size !== 'number' || selected.size > maxFileBytes) {
+      const limitMb = Math.round(maxFileBytes / (1024 * 1024))
+      setError(`File exceeds the ${limitMb} MB limit.`)
       setFile(null)
       return
     }
@@ -235,7 +254,7 @@ export default function BacktestUpload() {
     formData.append('file', file)
 
     try {
-      const { data } = await axios.post(`${API_URL}/analyze-backtest`, formData, {
+      const { data } = await axios.post(`${API_URL}/analyze-trades`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
       setResult(data)
@@ -267,7 +286,7 @@ export default function BacktestUpload() {
           <span className="text-sm text-gray-600">
             {file ? file.name : 'Click to select a CSV file'}
           </span>
-          <span className="text-xs text-gray-400 mt-1">Max 5 MB</span>
+          <span className="text-xs text-gray-400 mt-1">Max {Math.round(maxFileBytes / (1024 * 1024))} MB</span>
           <input
             ref={inputRef}
             type="file"

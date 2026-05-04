@@ -39,7 +39,7 @@ class TestDetectFormat:
 
     def test_unknown_columns_raises(self):
         csv_data = "foo,bar,baz\n1,2,3\n"
-        with pytest.raises(ValueError, match="do not match any known format"):
+        with pytest.raises(ValueError, match="missing these columns"):
             detect_format(csv_data)
 
     def test_empty_string_raises(self):
@@ -54,7 +54,7 @@ class TestDetectFormat:
     def test_partial_detailed_columns_raises(self):
         # Only 3 of 5 required detailed columns present
         csv_data = "date,symbol,action\n2024-01-15,AAPL,BUY\n"
-        with pytest.raises(ValueError, match="do not match any known format"):
+        with pytest.raises(ValueError, match="missing these columns"):
             detect_format(csv_data)
 
     def test_whitespace_only_raises(self):
@@ -67,7 +67,7 @@ class TestDetectFormat:
 
     def test_partial_summary_columns_raises(self):
         csv_data = "initial_capital,final_balance\n10000,12000\n"
-        with pytest.raises(ValueError, match="do not match any known format"):
+        with pytest.raises(ValueError, match="missing these columns"):
             detect_format(csv_data)
 
     def test_semicolon_delimited_after_sanitize(self):
