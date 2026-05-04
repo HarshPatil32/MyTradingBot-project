@@ -72,6 +72,8 @@ function BenchmarkComparison({ spyBenchmark, qqqBenchmark, strategyReturnPct }) 
 function DetailedResults({ trades, warnings, notices, pnl, spyBenchmark, qqqBenchmark }) {
   const safeWarnings = warnings ?? []
   const safeNotices = notices ?? []
+  const totalPnl = pnl?.total_pnl ?? 0
+  const totalReturnPct = pnl?.total_return_pct ?? 0
   return (
     <div className="space-y-4">
       {safeWarnings.length > 0 && (
@@ -99,14 +101,14 @@ function DetailedResults({ trades, warnings, notices, pnl, spyBenchmark, qqqBenc
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-gray-50 rounded p-3">
           <p className="text-xs text-gray-500">Total P&amp;L</p>
-          <p className={`text-xl font-bold ${pnl.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {pnl.total_pnl >= 0 ? '+' : ''}{pnl.total_pnl.toFixed(2)}
+          <p className={`text-xl font-bold ${totalPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)}
           </p>
         </div>
         <div className="bg-gray-50 rounded p-3">
           <p className="text-xs text-gray-500">Total Return</p>
-          <p className={`text-xl font-bold ${pnl.total_return_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {pnl.total_return_pct >= 0 ? '+' : ''}{pnl.total_return_pct.toFixed(2)}%
+          <p className={`text-xl font-bold ${totalReturnPct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {totalReturnPct >= 0 ? '+' : ''}{totalReturnPct.toFixed(2)}%
           </p>
         </div>
       </div>
@@ -114,7 +116,7 @@ function DetailedResults({ trades, warnings, notices, pnl, spyBenchmark, qqqBenc
       <BenchmarkComparison
         spyBenchmark={spyBenchmark}
         qqqBenchmark={qqqBenchmark}
-        strategyReturnPct={pnl.total_return_pct ?? 0}
+        strategyReturnPct={totalReturnPct}
       />
 
       <div>
@@ -235,7 +237,7 @@ export default function BacktestUpload() {
     formData.append('file', file)
 
     try {
-      const { data } = await axios.post(`${API_URL}/analyze-backtest`, formData, {
+      const { data } = await axios.post(`${API_URL}/analyze-trades`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
       setResult(data)
