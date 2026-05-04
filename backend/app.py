@@ -3,10 +3,11 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
 import json
 import numpy as np
+import threading
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from csv_analyzer import analyze_uploaded_trades, FreeTierLimitExceeded
@@ -93,6 +94,42 @@ _MB = 1024 * 1024
 # Max upload size for all file uploads (5 MB). Applies to every route via MAX_CONTENT_LENGTH.
 # Keep in sync with MAX_FILE_BYTES in frontend/src/screens/BacktestUpload.jsx
 _MAX_UPLOAD_BYTES = 5 * _MB
+
+# Free tier: max analyses per IP per calendar month (UTC)
+MONTHLY_ANALYSIS_LIMIT = 5
+
+# In-memory store: maps (ip, "YYYY-MM") -> request count.
+# Counts reset when the server restarts — users could exceed the monthly cap
+# across restarts. Acceptable for the free tier; replace with persistent
+# storage (e.g. Redis) if stricter enforcement is needed.
+_rate_limit_store: dict[tuple[str, str], int] = {}
+_rate_limit_lock = threading.Lock()
+
+
+def _get_client_ip() -> str:
+    """Return the real client IP, honouring X-Forwarded-For set by Render's proxy."""
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if forwarded_for:
+        # Use the rightmost entry — added by our trusted proxy, not the client.
+        # The leftmost entries can be spoofed by the client.
+        return forwarded_for.split(",")[-1].strip()
+    return request.remote_addr or "unknown"
+
+
+def _get_month_key() -> str:
+    """Return the current UTC month as 'YYYY-MM'. Extracted so tests can patch it."""
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def _check_rate_limit(ip: str) -> bool:
+    """Return True if the IP is within the monthly limit, False if exceeded."""
+    key = (ip, _get_month_key())
+    with _rate_limit_lock:
+        count = _rate_limit_store.get(key, 0)
+        if count >= MONTHLY_ANALYSIS_LIMIT:
+            return False
+        _rate_limit_store[key] = count + 1
+    return True
 
 # Try to import trading modules with error handling
 
@@ -553,6 +590,13 @@ def _safe_filename(raw: str) -> str:
 @app.route('/analyze-trades', methods=['POST'])
 def analyze_trades():
     """Accept a CSV upload and return sanitized trade analysis."""
+
+    ip = _get_client_ip()
+    if not _check_rate_limit(ip):
+        logger.warning("Rate limit exceeded for IP: %s", ip)
+        return jsonify({
+            "error": f"Free tier limit reached. You may run up to {MONTHLY_ANALYSIS_LIMIT} analyses per month. Resets on the 1st of next month."
+        }), 429
 
     try:
         if 'file' in request.files:
