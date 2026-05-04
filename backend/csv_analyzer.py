@@ -18,6 +18,10 @@ from typing import Any, Sequence
 
 from transaction_costs import calculate_commissions, calculate_slippage, calculate_bid_ask_spread, DEFAULT_COMMISSION_PER_TRADE, DEFAULT_SLIPPAGE_PCT, DEFAULT_SPREAD_PCT, MIN_CLOSED_TRADES_FOR_CONCLUSIONS, check_trade_count_sufficiency
 from statistical_tests import run_significance_tests
+from benchmark import fetch_benchmark
+
+SPY_TICKER = "SPY"
+QQQ_TICKER = "QQQ"
 
 def _normalize_action(action):
     """Normalize trade action to uppercase, handling None and whitespace."""
@@ -784,6 +788,14 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
         concentration_warning = check_concentration_risk(trades)
         if concentration_warning:
             warnings.append(concentration_warning)
+        try:
+            spy_benchmark = fetch_benchmark(trades, SPY_TICKER)
+        except Exception:
+            spy_benchmark = None
+        try:
+            qqq_benchmark = fetch_benchmark(trades, QQQ_TICKER)
+        except Exception:
+            qqq_benchmark = None
         result = {
             "format": fmt,
             "format_description": FORMAT_DESCRIPTIONS.get(fmt, ""),
@@ -795,6 +807,8 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
             "slippage": slippage,
             "bid_ask_spread": bid_ask_spread,
             "significance": significance,
+            "spy_benchmark": spy_benchmark,
+            "qqq_benchmark": qqq_benchmark,
         }
         print("DEBUG: Returning from detailed (main try):", result)
         return result
@@ -865,6 +879,8 @@ def analyze_uploaded_trades(csv_data: str, commission_per_trade: float = DEFAULT
                 "notices": notices,
                 "pnl": pnl,
                 "significance": significance,
+                "spy_benchmark": None,
+                "qqq_benchmark": None,
             }
             print("DEBUG: Returning from detailed:", result)
             return result
