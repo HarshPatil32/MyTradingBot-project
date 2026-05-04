@@ -7,7 +7,7 @@ from datetime import datetime
 from unittest.mock import patch
 
 import benchmark as benchmark_module
-from benchmark import fetch_benchmark, compare_user_return_to_benchmarks
+from benchmark import fetch_benchmark, compare_user_return_to_benchmarks, generate_verdict
 
 
 @pytest.fixture(autouse=True)
@@ -312,4 +312,85 @@ class TestCompareUserReturnToBenchmarks:
         assert result["any_benchmark_available"] is False
         assert result["best_alpha_ticker"] is None
         assert all(not c["available"] for c in result["comparisons"])
+
+    @patch(_MOCK_YF)
+    def test_verdict_included_in_result(self, mock_dl):
+        mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", 400.0, 480.0)
+        result = compare_user_return_to_benchmarks(_sample_trades(), after_cost_return_pct=25.0)
+        assert "verdict" in result
+        assert isinstance(result["verdict"], str)
+        assert len(result["verdict"]) > 0
+
+
+class TestGenerateVerdict:
+    def _make_result(self, user_return, comparisons, any_available=True):
+        return {
+            "after_cost_return_pct": user_return,
+            "comparisons": comparisons,
+            "any_benchmark_available": any_available,
+        }
+
+    def test_no_benchmark_available(self):
+        result = self._make_result(10.0, [], any_available=False)
+        assert generate_verdict(result) == "No benchmark data available to compare your results."
+
+    def test_underperformed_all(self):
+        result = self._make_result(5.0, [
+            {"ticker": "SPY", "benchmark_return_pct": 20.0, "alpha_pct": -15.0, "outperformed": False, "available": True},
+        ])
+        verdict = generate_verdict(result)
+        assert "SPY" in verdict
+        assert "15.0%" in verdict
+        assert "Buying and holding" in verdict
+
+    def test_beat_all(self):
+        result = self._make_result(30.0, [
+            {"ticker": "SPY", "benchmark_return_pct": 20.0, "alpha_pct": 10.0, "outperformed": True, "available": True},
+            {"ticker": "QQQ", "benchmark_return_pct": 25.0, "alpha_pct": 5.0, "outperformed": True, "available": True},
+        ])
+        verdict = generate_verdict(result)
+        assert "beat every benchmark" in verdict
+        assert "30.0%" in verdict
+
+    def test_beat_all_single_benchmark(self):
+        result = self._make_result(30.0, [
+            {"ticker": "SPY", "benchmark_return_pct": 20.0, "alpha_pct": 10.0, "outperformed": True, "available": True},
+        ])
+        verdict = generate_verdict(result)
+        assert "beat every benchmark" in verdict
+        assert "SPY" in verdict
+        assert "20.0%" in verdict
+
+    def test_mixed_results(self):
+        result = self._make_result(15.0, [
+            {"ticker": "SPY", "benchmark_return_pct": 10.0, "alpha_pct": 5.0, "outperformed": True, "available": True},
+            {"ticker": "QQQ", "benchmark_return_pct": 25.0, "alpha_pct": -10.0, "outperformed": False, "available": True},
+        ])
+        verdict = generate_verdict(result)
+        assert "SPY" in verdict
+        assert "QQQ" in verdict
+        # gap should be for QQQ (the only underperformer), matching the named ticker
+        assert "10.0%" in verdict
+
+    def test_mixed_results_gap_matches_named_ticker(self):
+        # When underperforming two benchmarks, only the worst is named and its gap is shown
+        result = self._make_result(10.0, [
+            {"ticker": "SPY", "benchmark_return_pct": 12.0, "alpha_pct": -2.0, "outperformed": False, "available": True},
+            {"ticker": "QQQ", "benchmark_return_pct": 20.0, "alpha_pct": -10.0, "outperformed": False, "available": True},
+            {"ticker": "DIA", "benchmark_return_pct": 8.0, "alpha_pct": 2.0, "outperformed": True, "available": True},
+        ])
+        verdict = generate_verdict(result)
+        # DIA was beaten, QQQ is the worst underperformer
+        assert "DIA" in verdict
+        assert "QQQ" in verdict
+        assert "10.0%" in verdict
+        # SPY should not be named — only the worst underperformer is
+        assert "SPY" not in verdict
+
+    def test_unavailable_benchmarks_ignored_in_verdict(self):
+        result = self._make_result(10.0, [
+            {"ticker": "SPY", "benchmark_return_pct": None, "alpha_pct": None, "outperformed": False, "available": False},
+        ], any_available=False)
+        verdict = generate_verdict(result)
+        assert verdict == "No benchmark data available to compare your results."
 

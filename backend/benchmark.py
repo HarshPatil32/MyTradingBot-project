@@ -152,9 +152,48 @@ def compare_user_return_to_benchmarks(
 
     available = [c for c in comparisons if c["available"]]
 
-    return {
+    result = {
         "after_cost_return_pct": round(after_cost_return_pct, 4),
         "comparisons": comparisons,
         "best_alpha_ticker": max(available, key=lambda c: c["alpha_pct"])["ticker"] if available else None,
         "any_benchmark_available": len(available) > 0,
     }
+    result["verdict"] = generate_verdict(result)
+    return result
+
+
+def generate_verdict(comparison_result: dict) -> str:
+    """Return a plain-English summary of how the user's strategy compared to benchmarks."""
+    if not comparison_result["any_benchmark_available"]:
+        return "No benchmark data available to compare your results."
+
+    available = [c for c in comparison_result["comparisons"] if c["available"]]
+    outperformed = [c for c in available if c["outperformed"]]
+
+    user_return = comparison_result["after_cost_return_pct"]
+
+    if len(outperformed) == len(available):
+        # Show the benchmark the user barely beat for context
+        nearest = min(available, key=lambda c: c["alpha_pct"])
+        return (
+            f"Your strategy beat every benchmark — you made {user_return:.1f}%"
+            f" vs {nearest['ticker']}'s {nearest['benchmark_return_pct']:.1f}%."
+        )
+
+    # Worst = largest gap where user trailed
+    worst = min(available, key=lambda c: c["alpha_pct"])
+
+    if not outperformed:
+        # Underperformed every benchmark
+        return (
+            f"Buying and holding {worst['ticker']} would have made you"
+            f" {abs(worst['alpha_pct']):.1f}% more with less effort."
+        )
+
+    # Mixed: beat some, trailed others — name only the worst underperformer so
+    # the quoted percentage always matches the named ticker
+    winner_names = ", ".join(c["ticker"] for c in outperformed)
+    return (
+        f"Your strategy beat {winner_names} but buying and holding {worst['ticker']}"
+        f" would have made you {abs(worst['alpha_pct']):.1f}% more with less effort."
+    )
