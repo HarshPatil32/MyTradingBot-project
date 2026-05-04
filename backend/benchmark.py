@@ -5,6 +5,7 @@ Fetches historical returns for a given ticker over the date range of uploaded tr
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timedelta
 
 import yfinance as yf
@@ -103,3 +104,57 @@ def fetch_benchmark(trades: list[dict], ticker: str) -> dict | None:
     }
     _cache[cache_key] = result
     return result
+
+
+def compare_user_return_to_benchmarks(
+    trades: list[dict],
+    after_cost_return_pct: float,
+    tickers: list[str] | None = None,
+) -> dict:
+    """Compare the user's after-cost return against one or more benchmark tickers.
+
+    For each ticker, fetches the benchmark return over the same date range as
+    the trades, then computes the difference (alpha). Returns a summary dict
+    with per-ticker results and an overall best/worst comparison.
+
+    Returns an empty comparisons list if trades are empty or no benchmark data
+    is available for any ticker.
+    """
+    if not isinstance(after_cost_return_pct, (int, float)) or math.isnan(after_cost_return_pct):
+        raise ValueError(
+            f"after_cost_return_pct must be a valid number, got {after_cost_return_pct!r}"
+        )
+
+    if tickers is None:
+        tickers = ["SPY", "QQQ"]
+
+    comparisons = []
+    for ticker in tickers:
+        benchmark = fetch_benchmark(trades, ticker)
+        if benchmark is None:
+            comparisons.append({
+                "ticker": ticker,
+                "benchmark_return_pct": None,
+                "alpha_pct": None,
+                "available": False,
+            })
+            continue
+
+        benchmark_return = benchmark["total_return_pct"]
+        alpha = round(after_cost_return_pct - benchmark_return, 4)
+        comparisons.append({
+            "ticker": ticker,
+            "benchmark_return_pct": benchmark_return,
+            "alpha_pct": alpha,
+            "outperformed": alpha > 0,  # ties (alpha == 0) do not count as outperforming
+            "available": True,
+        })
+
+    available = [c for c in comparisons if c["available"]]
+
+    return {
+        "after_cost_return_pct": round(after_cost_return_pct, 4),
+        "comparisons": comparisons,
+        "best_alpha_ticker": max(available, key=lambda c: c["alpha_pct"])["ticker"] if available else None,
+        "any_benchmark_available": len(available) > 0,
+    }

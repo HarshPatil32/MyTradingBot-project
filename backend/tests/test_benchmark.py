@@ -1,4 +1,4 @@
-"""Tests for benchmark.fetch_benchmark."""
+"""Tests for benchmark.fetch_benchmark and benchmark.compare_user_return_to_benchmarks."""
 
 import numpy as np
 import pandas as pd
@@ -7,7 +7,7 @@ from datetime import datetime
 from unittest.mock import patch
 
 import benchmark as benchmark_module
-from benchmark import fetch_benchmark
+from benchmark import fetch_benchmark, compare_user_return_to_benchmarks
 
 
 @pytest.fixture(autouse=True)
@@ -191,3 +191,125 @@ class TestFetchBenchmark:
         prices = np.linspace(start_price, end_price, len(dates))
         expected = round((prices[-1] - prices[0]) / prices[0] * 100, 4)
         assert result["total_return_pct"] == expected
+
+
+class TestCompareUserReturnToBenchmarks:
+    @patch(_MOCK_YF)
+    def test_returns_expected_structure(self, mock_dl):
+        mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", 400.0, 480.0)
+        result = compare_user_return_to_benchmarks(_sample_trades(), after_cost_return_pct=25.0)
+        assert "after_cost_return_pct" in result
+        assert "comparisons" in result
+        assert "best_alpha_ticker" in result
+        assert "any_benchmark_available" in result
+
+    @patch(_MOCK_YF)
+    def test_alpha_is_correct(self, mock_dl):
+        # Benchmark returns 20%, user returns 25% -> alpha = 5%
+        mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", 400.0, 480.0)
+        result = compare_user_return_to_benchmarks(
+            _sample_trades(), after_cost_return_pct=25.0, tickers=["SPY"]
+        )
+        spy = result["comparisons"][0]
+        assert spy["ticker"] == "SPY"
+        assert spy["available"] is True
+        expected_alpha = round(25.0 - spy["benchmark_return_pct"], 4)
+        assert spy["alpha_pct"] == expected_alpha
+
+    @patch(_MOCK_YF)
+    def test_outperformed_flag_true_when_alpha_positive(self, mock_dl):
+        mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", 400.0, 440.0)
+        result = compare_user_return_to_benchmarks(
+            _sample_trades(), after_cost_return_pct=20.0, tickers=["SPY"]
+        )
+        spy = result["comparisons"][0]
+        assert spy["outperformed"] is True
+
+    @patch(_MOCK_YF)
+    def test_outperformed_flag_false_when_alpha_negative(self, mock_dl):
+        mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", 400.0, 480.0)
+        result = compare_user_return_to_benchmarks(
+            _sample_trades(), after_cost_return_pct=5.0, tickers=["QQQ"]
+        )
+        qqq = result["comparisons"][0]
+        assert qqq["outperformed"] is False
+
+    @patch(_MOCK_YF)
+    def test_defaults_to_spy_and_qqq(self, mock_dl):
+        mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", 400.0, 480.0)
+        result = compare_user_return_to_benchmarks(_sample_trades(), after_cost_return_pct=10.0)
+        tickers_returned = [c["ticker"] for c in result["comparisons"]]
+        assert "SPY" in tickers_returned
+        assert "QQQ" in tickers_returned
+
+    @patch(_MOCK_YF)
+    def test_benchmark_unavailable_marked_correctly(self, mock_dl):
+        mock_dl.return_value = pd.DataFrame()  # empty -> fetch_benchmark returns None
+        result = compare_user_return_to_benchmarks(
+            _sample_trades(), after_cost_return_pct=10.0, tickers=["SPY"]
+        )
+        spy = result["comparisons"][0]
+        assert spy["available"] is False
+        assert spy["benchmark_return_pct"] is None
+        assert spy["alpha_pct"] is None
+        assert result["any_benchmark_available"] is False
+        assert result["best_alpha_ticker"] is None
+
+    def test_empty_trades_returns_unavailable(self):
+        result = compare_user_return_to_benchmarks([], after_cost_return_pct=10.0, tickers=["SPY"])
+        assert result["any_benchmark_available"] is False
+        assert result["comparisons"][0]["available"] is False
+
+    @patch(_MOCK_YF)
+    def test_best_alpha_ticker_is_highest_alpha(self, mock_dl):
+        # SPY call returns higher benchmark (smaller alpha), QQQ returns lower (larger alpha)
+        def _side_effect(ticker, **kwargs):
+            if ticker == "SPY":
+                return _make_df("2023-01-03", "2023-12-15", 400.0, 480.0)  # ~20% return
+            return _make_df("2023-01-03", "2023-12-15", 400.0, 420.0)  # ~5% return
+
+        mock_dl.side_effect = _side_effect
+        result = compare_user_return_to_benchmarks(
+            _sample_trades(), after_cost_return_pct=15.0
+        )
+        # User 15% vs SPY ~20% (alpha=-5), vs QQQ ~5% (alpha=+10) -> QQQ is best
+        assert result["best_alpha_ticker"] == "QQQ"
+
+    @patch(_MOCK_YF)
+    def test_after_cost_return_pct_preserved_in_output(self, mock_dl):
+        mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", 400.0, 480.0)
+        result = compare_user_return_to_benchmarks(
+            _sample_trades(), after_cost_return_pct=12.3456, tickers=["SPY"]
+        )
+        assert result["after_cost_return_pct"] == round(12.3456, 4)
+
+    @pytest.mark.parametrize("bad_val", [None, "15.0", float("nan")])
+    def test_invalid_after_cost_return_pct_raises(self, bad_val):
+        with pytest.raises((ValueError, TypeError)):
+            compare_user_return_to_benchmarks(_sample_trades(), after_cost_return_pct=bad_val, tickers=["SPY"])
+
+    @patch(_MOCK_YF)
+    def test_exact_tie_is_not_outperformed(self, mock_dl):
+        # Make benchmark return exactly match the user return so alpha == 0
+        mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", 400.0, 480.0)
+        spy_benchmark = fetch_benchmark(_sample_trades(), "SPY")
+        mock_dl.return_value = _make_df("2023-01-03", "2023-12-15", 400.0, 480.0)
+        result = compare_user_return_to_benchmarks(
+            _sample_trades(),
+            after_cost_return_pct=spy_benchmark["total_return_pct"],
+            tickers=["SPY"],
+        )
+        spy = result["comparisons"][0]
+        assert spy["alpha_pct"] == 0.0
+        assert spy["outperformed"] is False
+
+    @patch(_MOCK_YF)
+    def test_all_benchmarks_unavailable(self, mock_dl):
+        mock_dl.return_value = pd.DataFrame()  # all fetches fail
+        result = compare_user_return_to_benchmarks(
+            _sample_trades(), after_cost_return_pct=10.0, tickers=["SPY", "QQQ"]
+        )
+        assert result["any_benchmark_available"] is False
+        assert result["best_alpha_ticker"] is None
+        assert all(not c["available"] for c in result["comparisons"])
+
