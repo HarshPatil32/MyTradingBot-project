@@ -150,7 +150,11 @@ def _assert_content_safe(csv_data: str) -> None:
             if not stripped or _is_numeric_cell(stripped):
                 continue
             if stripped[0] in _UNSAFE_FIRST_CHARS:
-                raise ValueError("CSV contains a potentially unsafe cell value")
+                raise ValueError(
+                    "Your file contains a cell that cannot be processed safely "
+                    "(e.g. a value starting with =, +, @, or -). "
+                    "Please export a plain CSV from your trading platform."
+                )
 
 
 def _convert_semicolon_to_comma(csv_data: str) -> str:
@@ -220,10 +224,14 @@ def detect_format(csv_data: str) -> str:
 
     missing_detailed = REQUIRED_DETAILED_COLUMNS - actual_cols
     missing_summary = REQUIRED_SUMMARY_KEYS - actual_cols
+    if len(missing_detailed) <= len(missing_summary):
+        raise ValueError(
+            f"Your CSV looks like a trade-by-trade upload but is missing these columns: {sorted(missing_detailed)}. "
+            "Please check your file headers."
+        )
     raise ValueError(
-        f"CSV columns do not match any known format. "
-        f"For detailed format, missing: {sorted(missing_detailed)}. "
-        f"For summary format, missing: {sorted(missing_summary)}."
+        f"Your CSV looks like a summary upload but is missing these columns: {sorted(missing_summary)}. "
+        "Please check your file headers."
     )
 
 
@@ -241,7 +249,7 @@ def parse_detailed(csv_data: str, is_free_tier: bool = True) -> list[dict]:
 
     missing = REQUIRED_DETAILED_COLUMNS - norm_to_original.keys()
     if missing:
-        raise ValueError(f"CSV missing required columns: {sorted(missing)}")
+        raise ValueError(f"Your CSV is missing required columns: {sorted(missing)}. Please check your file headers.")
 
     # Access each required column by its original (un-normalized) fieldname
     col = {norm: norm_to_original[norm] for norm in REQUIRED_DETAILED_COLUMNS}
@@ -315,7 +323,7 @@ def parse_summary(csv_data: str) -> dict:
     missing = REQUIRED_SUMMARY_KEYS - actual_cols
     extra = actual_cols - REQUIRED_SUMMARY_KEYS
     if missing:
-        raise ValueError(f"CSV missing required fields: {sorted(missing)}. Did you typo a column?")
+        raise ValueError(f"Your CSV is missing required fields: {sorted(missing)}. Please check your column names.")
 
     # Map normalized required keys to original header
     col = {norm: norm_to_original[norm] for norm in REQUIRED_SUMMARY_KEYS}

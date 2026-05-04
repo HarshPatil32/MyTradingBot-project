@@ -551,7 +551,7 @@ def analyze_trades():
             try:
                 _safe_filename(upload.filename or "")
             except ValueError:
-                return jsonify({"error": "Invalid filename."}), 400
+                return jsonify({"error": "The filename is invalid. Please rename your file and try again."}), 400
             raw_bytes = upload.read()
             try:
                 csv_data = raw_bytes.decode("utf-8")
@@ -565,7 +565,11 @@ def analyze_trades():
                 return jsonify({"error": "csv_data must be a string."}), 400
             commission_per_trade = body.get("commission_per_trade", None)
         else:
-            return jsonify({"error": "Send a multipart file upload or JSON body with csv_data."}), 400
+            return jsonify({"error": "No file received. Please upload a CSV file or send csv_data in the request body."}), 400
+
+        # Reject empty uploads before any parsing
+        if not csv_data or not csv_data.strip():
+            return jsonify({"error": "The uploaded file is empty. Please upload a valid CSV file."}), 400
 
         # Validate commission_per_trade if provided
         if commission_per_trade is not None:
@@ -594,7 +598,7 @@ def analyze_trades():
         raise
     except Exception as exc:
         logger.error("analyze_backtest error: %s", exc)
-        return jsonify({"error": "Failed to process CSV."}), 500
+        return jsonify({"error": "An unexpected error occurred while processing your file. Please try again."}), 500
 
 
 if __name__ == "__main__":

@@ -35,19 +35,19 @@ class TestAssertContentSafe:
             _assert_content_safe("#!/bin/bash\nrm -rf /")
 
     def test_formula_equals_raises(self):
-        with pytest.raises(ValueError, match="unsafe cell"):
+        with pytest.raises(ValueError, match="cannot be processed safely"):
             _assert_content_safe("date,symbol\n2024-01-01,=CMD|'/C calc'!A0")
 
     def test_formula_plus_raises(self):
-        with pytest.raises(ValueError, match="unsafe cell"):
+        with pytest.raises(ValueError, match="cannot be processed safely"):
             _assert_content_safe("date,symbol\n2024-01-01,+cmd|' /C calc")
 
     def test_formula_at_raises(self):
-        with pytest.raises(ValueError, match="unsafe cell"):
+        with pytest.raises(ValueError, match="cannot be processed safely"):
             _assert_content_safe("date,symbol\n2024-01-01,@SUM(1+1)*cmd")
 
     def test_formula_minus_non_numeric_raises(self):
-        with pytest.raises(ValueError, match="unsafe cell"):
+        with pytest.raises(ValueError, match="cannot be processed safely"):
             _assert_content_safe("date,symbol\n2024-01-01,-cmd|payload")
 
     def test_minus_numeric_price_passes(self):
@@ -200,6 +200,18 @@ class TestAnalyzeBacktestRoute:
         data = {"file": (io.BytesIO(b"date,symbol\n"), "../../")}
         resp = client.post("/analyze-trades", content_type="multipart/form-data", data=data)
         assert resp.status_code == 400
+
+    def test_empty_file_body_returns_400(self, client):
+        data = {"file": (io.BytesIO(b""), "empty.csv")}
+        resp = client.post("/analyze-trades", content_type="multipart/form-data", data=data)
+        assert resp.status_code == 400
+        assert "empty" in resp.get_json()["error"].lower()
+
+    def test_whitespace_only_file_returns_400(self, client):
+        data = {"file": (io.BytesIO(b"   \n  "), "blank.csv")}
+        resp = client.post("/analyze-trades", content_type="multipart/form-data", data=data)
+        assert resp.status_code == 400
+        assert "empty" in resp.get_json()["error"].lower()
 
     def test_wrong_content_type_returns_400(self, client):
         resp = client.post("/analyze-trades", data="plain text", content_type="text/plain")
