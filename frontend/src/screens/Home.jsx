@@ -1,9 +1,10 @@
 import { TrendingUp } from 'lucide-react'
 
 const pillars = [
-  { title: 'CSV', description: 'Upload any broker format' },
-  { title: 'Plain English', description: 'No jargon, no complexity' },
-  { title: 'Honest', description: 'Truth over flattery' },
+  { title: 'Any Broker', description: 'Upload any CSV format' },
+  { title: 'True Returns', description: 'After fees, spreads, and taxes' },
+  { title: 'Benchmark', description: 'SPY and QQQ comparison' },
+  { title: 'Plain English', description: 'No finance background needed' },
 ]
 
 export default function Home({ onAnalyze }) {
@@ -23,10 +24,6 @@ export default function Home({ onAnalyze }) {
           </p>
         </div>
 
-        <p className="text-sm text-zinc-500 max-w-sm leading-relaxed">
-          Upload a CSV from any broker, get an honest breakdown of your costs, habits, and returns
-        </p>
-
         <button
           onClick={onAnalyze}
           disabled={!onAnalyze}
@@ -36,7 +33,7 @@ export default function Home({ onAnalyze }) {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 sm:gap-16">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-8 sm:gap-12">
         {pillars.map(({ title, description }) => (
           <div key={title} className="flex flex-col items-center gap-1">
             <span className="text-2xl font-bold text-white">{title}</span>
