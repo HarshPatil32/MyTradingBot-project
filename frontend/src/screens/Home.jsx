@@ -16,7 +16,7 @@ export default function Home({ onAnalyze }) {
         </div>
 
         <div className="flex flex-col items-center gap-3">
-          <h1 className="text-5xl font-bold text-white tracking-tight">
+          <h1 className="text-4xl md:text-5xl font-bold text-white tracking-tight">
             Trade Analyzer
           </h1>
           <p className="text-lg text-zinc-400">

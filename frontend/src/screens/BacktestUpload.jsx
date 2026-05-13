@@ -274,7 +274,10 @@ export default function BacktestUpload() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-6">
+    <div className="max-w-2xl mx-auto p-4 md:p-6">
+      <div className="md:hidden mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+        CSV upload works best on a desktop or laptop. Some features may be harder to use on mobile.
+      </div>
       <h2 className="text-2xl font-bold text-gray-800 mb-1">Backtest CSV Upload</h2>
       <p className="text-sm text-gray-500 mb-6">
         Upload a detailed trade log or a summary report — the format is detected automatically.

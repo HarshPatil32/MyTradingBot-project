@@ -20,7 +20,7 @@ function App() {
         <Home onAnalyze={() => setActiveTab('backtest')} />
       ) : (
         <div className="app">
-          <nav className="flex gap-2 p-4 border-b border-gray-200">
+          <nav className="flex flex-wrap gap-2 p-4 border-b border-gray-200">
             <button
               onClick={() => setActiveTab('home')}
               className="px-4 py-2 rounded text-sm font-medium text-gray-600 hover:bg-gray-100"
